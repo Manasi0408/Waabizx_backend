@@ -1,0 +1,28 @@
+{
+  "name": "icicifresh999old_v2",
+  "category": "MARKETING",
+  "language": "en_IN",
+  "components": [
+    {
+      "type": "HEADER",
+      "format": "TEXT",
+      "text": "Loan Consolidation Offer"
+    },
+    {
+      "type": "BODY",
+      "text": "Hello,\n\nYou can consolidate your existing loans into a single personal loan.\n\nLoan Details:\n• Maximum Amount: {{1}}\n• Interest Rate: {{2}}% per annum (reducing balance)\n• Processing Fee: {{3}}\n• Tenure: Up to {{4}} years\n\nDisbursement:\n• Amount will be credited to your registered account: {{5}}\n• Processing time: {{6}} working days after approval\n\nRequired Documents:\n1. Latest 3 months salary slip\n2. Latest 3 months bank statement\n3. PAN Card\n4. Aadhaar Card\n5. Address Proof\n\nThis is a promotional message. Loan approval is subject to verification and credit assessment.\n\nTo proceed, please reply below.\n\nTo opt-out, reply STOP."
+    },
+    {
+      "type": "FOOTER",
+      "text": "T&C apply. Approval subject to verification."
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [
+        { "type": "QUICK_REPLY", "text": "INTERESTED" },
+        { "type": "QUICK_REPLY", "text": "NOT INTERESTED" }
+      ]
+    }
+  ]
+}
+

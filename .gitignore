@@ -1,0 +1,17 @@
+# Ignore environment variables (VERY IMPORTANT)
+.env
+
+# Node modules (large folder)
+node_modules/
+
+# Build folders
+build/
+dist/
+
+# Logs
+logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

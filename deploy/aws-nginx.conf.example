@@ -1,0 +1,34 @@
+# AWS EC2 — nginx in front of Node (Express serves React + /api)
+# Install: sudo apt install nginx
+# Place in /etc/nginx/sites-available/app.waabizx.com then enable site.
+#
+# Node must be running: pm2 start server.js (default PORT 3002 in .env)
+
+upstream waabizx_node {
+    server 127.0.0.1:3002;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name app.waabizx.com;
+
+    # After certbot: listen 443 ssl; + ssl_certificate paths
+
+    client_max_body_size 1024M;
+
+    location / {
+        proxy_pass http://waabizx_node;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+    }
+}
+
+# IMPORTANT: Do NOT use "root /var/www/build" + try_files for the whole site.
+# That serves static files only and returns 405 for POST /api/auth/login.

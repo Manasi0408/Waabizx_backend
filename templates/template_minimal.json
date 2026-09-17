@@ -1,0 +1,22 @@
+{
+  "name": "loan_documents_info_v1",
+  "category": "UTILITY",
+  "language": "en_IN",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Hello {{1}},\n\nYour loan application requires the following documents:\n\n1. Salary slip (3 months)\n2. Bank statement (3 months)\n3. PAN Card\n4. Aadhaar Card\n5. Address Proof\n\nPlease submit these documents to complete your application.\n\nFor assistance, contact support.\n\nReply STOP to opt-out."
+    },
+    {
+      "type": "FOOTER",
+      "text": "T&C apply."
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [
+        { "type": "QUICK_REPLY", "text": "CONTACT SUPPORT" }
+      ]
+    }
+  ]
+}
+

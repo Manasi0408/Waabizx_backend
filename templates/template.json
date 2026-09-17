@@ -1,0 +1,28 @@
+{
+    "name": "icicifresh999old",
+    "category": "MARKETING",
+    "language": "en_IN",
+    "components": [
+      {
+        "type": "HEADER",
+        "format": "TEXT",
+        "text": "Loan Offer - ICICI BANK"
+      },
+      {
+        "type": "BODY",
+        "text": "Hello,\n\nGreat chance to convert all your Old Loans into one single loan.\n\nConsolidate your debt with a Personal loan up to {{1}} at {{2}}%.\n\n{{3}} offering you,\n\nPRE-APPROVED PERSONAL LOAN\n\nOffer Amount: {{4}}, EMI: {{5}}/-\nTenure: {{6}} years\nAmount will be credited to salary account: {{7}}/-\nRate of interest: {{8}}% Reducing\nProcessing fee: {{9}}/-\nAnnual Maintenance Charges: {{10}}/-\nStamp duty: {{11}}/-\nPre-closer & Part-Payment: {{12}}/-\n\nWithin {{13}} working days, the amount will be credited (disbursed) after login.\n\nDocuments Required:\n1) Latest 3 months salary slip\n2) Latest 3 months salary bank statement\n3) Pan Card\n4) Aadhaar Card\n5) Address Proof\n\nIf you wish to proceed, click below.\n\nTO STOP MESSAGES, REPLY NOT-INTERESTED\n\nNO KYC DOCUMENT IS REQUIRED FOR SALARY ACCOUNT HOLDERS"
+      },
+      {
+        "type": "FOOTER",
+        "text": "Terms and conditions apply"
+      },
+      {
+        "type": "BUTTONS",
+        "buttons": [
+          { "type": "QUICK_REPLY", "text": "YES/APPLY" },
+          { "type": "QUICK_REPLY", "text": "NOT INTERESTED" }
+        ]
+      }
+    ]
+  }
+  

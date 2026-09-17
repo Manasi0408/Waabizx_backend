@@ -1,0 +1,44 @@
+# Hostinger / nginx reverse proxy for api.waabizx.com
+# Replace 3002 with your Node PORT from backend/.env
+
+upstream waabizx_api {
+    server 127.0.0.1:3002;
+    keepalive 32;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.waabizx.com;
+
+    # ssl_certificate ...;
+    # ssl_certificate_key ...;
+
+    location / {
+        # Handle CORS preflight at nginx when Node is reachable
+        if ($request_method = OPTIONS) {
+            set $cors_origin "";
+            if ($http_origin ~* ^https://([a-z0-9-]+\.)*waabizx\.com$) {
+                set $cors_origin $http_origin;
+            }
+            if ($http_origin = "http://localhost:3000") {
+                set $cors_origin $http_origin;
+            }
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials "true" always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization, x-project-id, x_project_id, Accept, Origin, X-Requested-With, Cache-Control" always;
+            add_header Access-Control-Max-Age 86400 always;
+            return 204;
+        }
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 60s;
+        proxy_pass http://waabizx_api;
+    }
+}

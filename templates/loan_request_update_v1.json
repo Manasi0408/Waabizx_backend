@@ -1,0 +1,12 @@
+{
+    "name": "loan_request_update_v1",
+    "category": "UTILITY",
+    "language": "en_US",
+    "components": [
+      {
+        "type": "BODY",
+        "text": "Hello {{1}},\n\nThis message is regarding an update to your previously submitted loan-related request with {{2}}.\n\nOur records have been updated successfully. You will be notified if any further information is required.\n\nThank you."
+      }
+    ]
+  }
+  

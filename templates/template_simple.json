@@ -1,0 +1,28 @@
+{
+  "name": "loan_info_simple_v2",
+  "category": "MARKETING",
+  "language": "en_IN",
+  "components": [
+    {
+      "type": "HEADER",
+      "format": "TEXT",
+      "text": "Loan Information"
+    },
+    {
+      "type": "BODY",
+      "text": "Hello {{1}},\n\nPersonal loan offer available.\n\nDetails:\n• Loan Amount: {{2}}\n• Interest Rate: {{3}}% per annum\n• Tenure: {{4}} years\n• Processing Fee: {{5}}\n\nProcessing time: {{6}} working days\n\nRequired documents:\n• Salary slip (3 months)\n• Bank statement (3 months)\n• PAN Card\n• Aadhaar Card\n• Address Proof\n\nThis is a promotional message. Approval subject to verification.\n\nReply INTERESTED for more information.\nReply STOP to opt-out."
+    },
+    {
+      "type": "FOOTER",
+      "text": "T&C apply."
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [
+        { "type": "QUICK_REPLY", "text": "INTERESTED" },
+        { "type": "QUICK_REPLY", "text": "NOT INTERESTED" }
+      ]
+    }
+  ]
+}
+
