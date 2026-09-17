@@ -19,7 +19,7 @@ const Campaign = sequelize.define('Campaign', {
     defaultValue: ''
   },
   status: {
-    type: DataTypes.ENUM('draft', 'PENDING', 'PROCESSING', 'COMPLETED', 'PAUSED', 'scheduled', 'active', 'completed', 'paused'),
+    type: DataTypes.ENUM('draft', 'PENDING', 'PROCESSING', 'COMPLETED', 'PAUSED', 'scheduled', 'active'),
     defaultValue: 'draft'
   },
   type: {
@@ -54,6 +54,12 @@ const Campaign = sequelize.define('Campaign', {
     allowNull: true,
     defaultValue: null,
     comment: 'IMAGE, VIDEO, or DOCUMENT — required for media header templates at send time'
+  },
+  carousel_card_media_urls: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: null,
+    comment: 'Ordered public/stored URLs for each carousel card header at send time',
   },
   schedule_time: {
     type: DataTypes.DATE,

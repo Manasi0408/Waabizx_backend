@@ -527,6 +527,56 @@ function metaTemplateHasButtons(components) {
 }
 
 /** Use broadcast/campaign stored header hint when DB template metadata is incomplete. */
+function normalizeCarouselCardMediaUrlsInput(raw) {
+  let urls = raw;
+  if (typeof urls === 'string') {
+    try {
+      urls = JSON.parse(urls);
+    } catch {
+      urls = [];
+    }
+  }
+  if (!Array.isArray(urls)) return [];
+  return urls
+    .map((u) => toPermanentUploadPath(u) || String(u || '').trim())
+    .filter(Boolean);
+}
+
+function normalizeStoredCarouselCardMediaUrls(stored) {
+  return normalizeCarouselCardMediaUrlsInput(stored);
+}
+
+/** Carousel URLs from campaign row (column or legacy variable_mapping stash). */
+function resolveCampaignCarouselCardMediaUrls(campaign) {
+  const fromColumn = normalizeStoredCarouselCardMediaUrls(campaign?.carousel_card_media_urls);
+  if (fromColumn.length) return fromColumn;
+  const vm = campaign?.variable_mapping;
+  if (vm && typeof vm === 'object' && !Array.isArray(vm)) {
+    return normalizeStoredCarouselCardMediaUrls(vm.__carouselCardMediaUrls);
+  }
+  return [];
+}
+
+function stashCarouselUrlsInVariableMapping(variableMapping, carouselUrls) {
+  const base =
+    variableMapping && typeof variableMapping === 'object' && !Array.isArray(variableMapping)
+      ? { ...variableMapping }
+      : {};
+  if (Array.isArray(carouselUrls) && carouselUrls.length) {
+    base.__carouselCardMediaUrls = carouselUrls;
+  }
+  return base;
+}
+
+function templateSendSpecOptionsFromRecord(template) {
+  const vars = getTemplateVariablesObject(template);
+  return {
+    templateType: vars.templateType || null,
+    carouselMediaType: vars.carouselMediaType || null,
+    carouselCards: Array.isArray(vars.carouselCards) ? vars.carouselCards : null,
+  };
+}
+
 function applyCampaignHeaderHint(sendSpec, campaign) {
   const spec = sendSpec || {
     headerFormat: null,
@@ -535,6 +585,7 @@ function applyCampaignHeaderHint(sendSpec, campaign) {
     needsHeaderMedia: false,
     needsHeaderText: false,
   };
+  if (spec.isCarousel) return spec;
   if (spec.headerFormat) return spec;
 
   const hint = String(campaign?.template_header_format || '').toUpperCase();
@@ -568,4 +619,9 @@ module.exports = {
   normalizeFlowButtons,
   metaTemplateHasButtons,
   applyCampaignHeaderHint,
+  normalizeCarouselCardMediaUrlsInput,
+  normalizeStoredCarouselCardMediaUrls,
+  resolveCampaignCarouselCardMediaUrls,
+  stashCarouselUrlsInVariableMapping,
+  templateSendSpecOptionsFromRecord,
 };

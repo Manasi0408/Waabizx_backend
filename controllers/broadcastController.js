@@ -11,11 +11,14 @@ const {
   toPublicMediaUrl,
   toPermanentUploadPath,
   extractButtonsFromComponents,
+  normalizeCarouselCardMediaUrlsInput,
+  templateSendSpecOptionsFromRecord,
 } = require('../utils/templateMessageComponents');
 const {
   resolveTemplateComponentsForSend,
   resolveTemplateForSend,
 } = require('../services/metaTemplateFetchService');
+const { createCampaignWithCarouselSupport } = require('../utils/dbSchemaEnsure');
 const path = require('path');
 const fs = require('fs');
 
@@ -475,6 +478,8 @@ exports.createBroadcast = async (req, res) => {
       variable_mapping, // { "{{1}}": "name", "{{2}}": "order_id" }
       segment_tag, // For segment-based selection
       header_media_url,
+      carousel_card_media_urls: carouselCardMediaUrlsBody,
+      carouselCardMediaUrls: carouselCardMediaUrlsCamel,
     } = req.body;
     
     // Validate input
@@ -619,14 +624,11 @@ exports.createBroadcast = async (req, res) => {
       );
     }
 
-    const sendSpec = parseTemplateSendSpec(metaComponents, template.content || '', {
-      templateType:
-        template.variables &&
-        typeof template.variables === 'object' &&
-        !Array.isArray(template.variables)
-          ? template.variables.templateType
-          : null,
-    });
+    const sendSpec = parseTemplateSendSpec(
+      metaComponents,
+      template.content || '',
+      templateSendSpecOptionsFromRecord(template)
+    );
 
     const storedHeaderMediaUrl =
       toPermanentUploadPath(header_media_url) ||
@@ -634,12 +636,26 @@ exports.createBroadcast = async (req, res) => {
         ? String(header_media_url).trim()
         : null);
 
+    const storedCarouselCardMediaUrls = normalizeCarouselCardMediaUrlsInput(
+      carouselCardMediaUrlsBody ?? carouselCardMediaUrlsCamel
+    );
+
     if (sendSpec.needsHeaderMedia && !toPublicMediaUrl(storedHeaderMediaUrl)) {
       return res.status(400).json({
         success: false,
         message:
           'This template requires header media (image, video, or document). Upload media or provide a public HTTPS URL before sending.',
       });
+    }
+
+    if (sendSpec.isCarousel && sendSpec.carouselCardCount > 0) {
+      const validCarousel = storedCarouselCardMediaUrls.filter((u) => toPublicMediaUrl(u));
+      if (validCarousel.length !== sendSpec.carouselCardCount) {
+        return res.status(400).json({
+          success: false,
+          message: `This carousel template requires media for all ${sendSpec.carouselCardCount} cards. Choose image or video for each card before sending.`,
+        });
+      }
     }
 
     const requiredVars = sendSpec.bodyVarNums;
@@ -680,7 +696,7 @@ exports.createBroadcast = async (req, res) => {
     const scheduleDate = schedule_time ? new Date(schedule_time) : null;
     const isFutureSchedule = scheduleDate && scheduleDate.getTime() > Date.now();
 
-    const campaign = await Campaign.create({
+    const campaign = await createCampaignWithCarouselSupport({
       userId,
       projectId,
       name,
@@ -689,6 +705,10 @@ exports.createBroadcast = async (req, res) => {
       variable_mapping: variable_mapping || null,
       header_media_url: storedHeaderMediaUrl,
       template_header_format: sendSpec.headerFormat || null,
+      carousel_card_media_urls:
+        sendSpec.isCarousel && storedCarouselCardMediaUrls.length
+          ? storedCarouselCardMediaUrls
+          : null,
       schedule_time: scheduleDate,
       status: isFutureSchedule ? 'scheduled' : 'PENDING',
       type: 'broadcast',

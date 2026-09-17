@@ -25,6 +25,38 @@ function getMetaErrorCode(err) {
   return matched ? Number(matched[1]) : null;
 }
 
+function buildCampaignCarouselTemplatePayload({
+  sendSpec,
+  metaComponents,
+  carouselCardMediaUrls,
+  cachedCarouselCardMediaIds,
+  audienceMember,
+  normalizedTemplateName,
+  effectiveTemplateLanguage,
+  normalizedPhoneNumber,
+}) {
+  const components = buildWhatsAppCarouselTemplateComponents({
+    sendSpec,
+    resolvedComponents: metaComponents,
+    cardHeaderMediaIds: cachedCarouselCardMediaIds,
+    cardHeaderMediaUrls: carouselCardMediaUrls,
+    audienceMember,
+  });
+  const payload = {
+    messaging_product: 'whatsapp',
+    to: normalizedPhoneNumber,
+    type: 'template',
+    template: {
+      name: normalizedTemplateName,
+      language: { code: effectiveTemplateLanguage },
+    },
+  };
+  if (components?.length) {
+    payload.template.components = components;
+  }
+  return payload;
+}
+
 async function buildCampaignTemplatePayload({
   sendSpec,
   metaComponents,
@@ -111,6 +143,8 @@ async function sendCampaignTemplateWithRetries({
   campaignHeaderMediaUrl,
   cachedHeaderMediaId = null,
   cachedHeaderMediaPhoneId = null,
+  carouselCardMediaUrls = [],
+  cachedCarouselCardMediaIds = [],
   audienceMember,
   normalizedTemplateName,
   effectiveTemplateLanguage,
@@ -124,6 +158,23 @@ async function sendCampaignTemplateWithRetries({
   const isMarketing = templateBillingCategory === 'marketing';
   const sendOptions = { userId, projectId, isMarketing };
   const needsHeaderMedia = Boolean(sendSpec?.needsHeaderMedia && headerMediaSource);
+
+  if (sendSpec?.isCarousel) {
+    const templatePayload = buildCampaignCarouselTemplatePayload({
+      sendSpec,
+      metaComponents,
+      carouselCardMediaUrls,
+      cachedCarouselCardMediaIds,
+      audienceMember,
+      normalizedTemplateName,
+      effectiveTemplateLanguage,
+      normalizedPhoneNumber,
+    });
+    return await postTemplateWithMarketingFallback(waCandidates, templatePayload, {
+      ...sendOptions,
+      preferredPhoneNumberId: cachedHeaderMediaPhoneId || sendOptions.preferredPhoneNumberId,
+    });
+  }
 
   const attempts = [];
   if (needsHeaderMedia && primaryCreds) {
@@ -232,6 +283,7 @@ const tagService = require('../services/tagService');
 const {
   parseTemplateSendSpec,
   buildWhatsAppTemplateComponents,
+  buildWhatsAppCarouselTemplateComponents,
   toPublicMediaUrl,
   toPermanentUploadPath,
   getTemplateComponents,
@@ -239,7 +291,12 @@ const {
   applyCampaignHeaderHint,
   buildBodyParamsFromAudience,
   extractDynamicUrlButtonComponents,
+  normalizeCarouselCardMediaUrlsInput,
+  normalizeStoredCarouselCardMediaUrls,
+  resolveCampaignCarouselCardMediaUrls,
+  templateSendSpecOptionsFromRecord,
 } = require('../utils/templateMessageComponents');
+const { createCampaignWithCarouselSupport } = require('../utils/dbSchemaEnsure');
 const { buildClientTemplatePreview, enrichTemplateRecordWithComponents, finalizeTemplateSnapshotForInbox } = require('../utils/templatePreviewUtil');
 const { resolveHeaderMediaIdForSend } = require('../services/templateHeaderSendService');
 const {
@@ -642,7 +699,19 @@ exports.createCampaign = async (req, res) => {
     const userId = req.user.id;
     const projectId = requireProjectId(req, res);
     if (!projectId) return;
-    const { name, template_name, template_language = "en_US", schedule_time, audience, variable_mapping, contactIds, tags, header_media_url } = req.body;
+    const {
+      name,
+      template_name,
+      template_language = 'en_US',
+      schedule_time,
+      audience,
+      variable_mapping,
+      contactIds,
+      tags,
+      header_media_url,
+      carousel_card_media_urls: carouselCardMediaUrlsBody,
+      carouselCardMediaUrls: carouselCardMediaUrlsCamel,
+    } = req.body;
     const tagIds = tags || req.body.tagIds;
 
     if (!name || !template_name) {
@@ -673,15 +742,10 @@ exports.createCampaign = async (req, res) => {
           : [];
     const sendSpec = parseTemplateSendSpec(
       componentsForSpec,
-      loadedTemplate?.content || metaTpl?.components?.find((c) => String(c.type || '').toUpperCase() === 'BODY')?.text || '',
-      {
-        templateType:
-          loadedTemplate?.variables &&
-          typeof loadedTemplate.variables === 'object' &&
-          !Array.isArray(loadedTemplate.variables)
-            ? loadedTemplate.variables.templateType
-            : null,
-      }
+      loadedTemplate?.content ||
+        metaTpl?.components?.find((c) => String(c.type || '').toUpperCase() === 'BODY')?.text ||
+        '',
+      templateSendSpecOptionsFromRecord(loadedTemplate || {})
     );
     const finalLanguage =
       template_language ||
@@ -706,6 +770,19 @@ exports.createCampaign = async (req, res) => {
         message:
           'This template requires header media (image, video, or document). Upload media or provide a public HTTPS URL before sending.',
       });
+    }
+
+    const storedCarouselCardMediaUrls = normalizeCarouselCardMediaUrlsInput(
+      carouselCardMediaUrlsBody ?? carouselCardMediaUrlsCamel
+    );
+    if (sendSpec.isCarousel && sendSpec.carouselCardCount > 0) {
+      const validCarousel = storedCarouselCardMediaUrls.filter((u) => toPublicMediaUrl(u));
+      if (validCarousel.length !== sendSpec.carouselCardCount) {
+        return res.status(400).json({
+          success: false,
+          message: `This carousel template requires media for all ${sendSpec.carouselCardCount} cards. Choose image or video for each card before sending.`,
+        });
+      }
     }
 
     const limitCheck = await enforcePlanLimit(req, res, 'campaigns');
@@ -734,7 +811,7 @@ exports.createCampaign = async (req, res) => {
       status = 'PENDING';
     }
 
-    const campaign = await Campaign.create({
+    const campaign = await createCampaignWithCarouselSupport({
       userId,
       projectId,
       name,
@@ -743,6 +820,10 @@ exports.createCampaign = async (req, res) => {
       variable_mapping: variable_mapping || null,
       header_media_url: storedHeaderMediaUrl,
       template_header_format: sendSpec.headerFormat || null,
+      carousel_card_media_urls:
+        sendSpec.isCarousel && storedCarouselCardMediaUrls.length
+          ? storedCarouselCardMediaUrls
+          : null,
       schedule_time: schedule_time ? new Date(schedule_time) : null,
       status,
       total,
@@ -1783,14 +1864,11 @@ async function processCampaign(campaignId, userId, projectId) {
         metaComponents = metaTpl.components;
       }
       sendSpec = applyCampaignHeaderHint(
-        parseTemplateSendSpec(metaComponents, loadedTemplate?.content || '', {
-          templateType:
-            loadedTemplate?.variables &&
-            typeof loadedTemplate.variables === 'object' &&
-            !Array.isArray(loadedTemplate.variables)
-              ? loadedTemplate.variables.templateType
-              : null,
-        }),
+        parseTemplateSendSpec(
+          metaComponents,
+          loadedTemplate?.content || '',
+          templateSendSpecOptionsFromRecord(loadedTemplate || {})
+        ),
         campaign
       );
       console.log('📋 Campaign template send spec', {
@@ -1800,6 +1878,9 @@ async function processCampaign(campaignId, userId, projectId) {
         headerFormat: sendSpec.headerFormat,
         bodyVarNums: sendSpec.bodyVarNums,
         needsHeaderMedia: sendSpec.needsHeaderMedia,
+        isCarousel: sendSpec.isCarousel,
+        carouselCardCount: sendSpec.carouselCardCount,
+        carouselCardHeaderFormat: sendSpec.carouselCardHeaderFormat,
         metaButtonCount: extractButtonsFromComponents(metaComponents).length,
       });
     } catch (e) {
@@ -1855,6 +1936,55 @@ async function processCampaign(campaignId, userId, projectId) {
       }
     }
 
+    let carouselCardMediaUrls = resolveCampaignCarouselCardMediaUrls(campaign);
+    let cachedCarouselCardMediaIds = [];
+    if (sendSpec?.isCarousel && sendSpec.carouselCardCount > 0) {
+      const validCarousel = carouselCardMediaUrls.filter((u) => toPublicMediaUrl(u));
+      if (validCarousel.length !== sendSpec.carouselCardCount) {
+        campaign.status = 'PAUSED';
+        await campaign.save();
+        console.error(
+          `❌ Campaign ${campaignId} paused: carousel template requires media for all ${sendSpec.carouselCardCount} cards`
+        );
+        return;
+      }
+      carouselCardMediaUrls = validCarousel;
+      for (let i = 0; i < carouselCardMediaUrls.length; i += 1) {
+        const cardUrl = carouselCardMediaUrls[i];
+        try {
+          const uploaded = await resolveHeaderMediaIdForSend(
+            waCandidates,
+            cardUrl,
+            sendSpec.carouselCardHeaderFormat,
+            { preferredPhoneNumberId: campaignHeaderMediaPhoneId || undefined }
+          );
+          cachedCarouselCardMediaIds.push(uploaded?.mediaId || null);
+          if (uploaded?.phoneNumberId) {
+            campaignHeaderMediaPhoneId = uploaded.phoneNumberId;
+          }
+        } catch (carouselUploadErr) {
+          console.warn(
+            `Campaign ${campaignId} carousel card ${i + 1} media upload failed:`,
+            carouselUploadErr?.message || carouselUploadErr
+          );
+          cachedCarouselCardMediaIds.push(null);
+        }
+      }
+      for (let i = 0; i < carouselCardMediaUrls.length; i += 1) {
+        const needsMetaId =
+          String(sendSpec.carouselCardHeaderFormat || '').toUpperCase() === 'VIDEO' ||
+          !toPublicMediaUrl(carouselCardMediaUrls[i]);
+        if (needsMetaId && !cachedCarouselCardMediaIds[i]) {
+          campaign.status = 'PAUSED';
+          await campaign.save();
+          console.error(
+            `❌ Campaign ${campaignId} paused: could not upload carousel card ${i + 1} media to WhatsApp`
+          );
+          return;
+        }
+      }
+    }
+
     const CAMPAIGN_BATCH_SIZE = 50;
     const CAMPAIGN_SEND_CONCURRENCY = 25;
     const templateBillingCategory = await resolveCampaignTemplateBillingCategory(campaign, userId, projectId);
@@ -1907,6 +2037,17 @@ async function processCampaign(campaignId, userId, projectId) {
           return;
         }
 
+        if (sendSpec?.isCarousel && sendSpec.carouselCardCount > 0) {
+          if (carouselCardMediaUrls.length !== sendSpec.carouselCardCount) {
+            audienceMember.status = 'failed';
+            audienceMember.errorMessage =
+              'Carousel template requires media for every card — recreate the campaign with card media selected';
+            await audienceMember.save();
+            await Campaign.increment('failed', { where: { id: campaignId } });
+            return;
+          }
+        }
+
         const billing = await upsertConversationWithQuota(userId, normalizedPhoneNumber);
         if (!billing.allowed) {
           audienceMember.status = 'failed';
@@ -1942,6 +2083,8 @@ async function processCampaign(campaignId, userId, projectId) {
             campaignHeaderMediaUrl,
             cachedHeaderMediaId: campaignHeaderMediaId,
             cachedHeaderMediaPhoneId: campaignHeaderMediaPhoneId,
+            carouselCardMediaUrls,
+            cachedCarouselCardMediaIds,
             audienceMember,
             normalizedTemplateName,
             effectiveTemplateLanguage,

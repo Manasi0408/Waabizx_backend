@@ -175,6 +175,12 @@ const syncDatabase = async () => {
     } catch (campaignError) {
       console.error('⚠️  Campaign table sync error:', campaignError.message);
     }
+    try {
+      const { ensureCampaignCarouselMediaColumn } = require('../utils/dbSchemaEnsure');
+      await ensureCampaignCarouselMediaColumn();
+    } catch (carouselColErr) {
+      console.warn('⚠️  campaigns.carousel_card_media_urls ensure:', carouselColErr?.message || carouselColErr);
+    }
     
     // Ensure Template table has updated ENUM values (including marketing category)
     try {
