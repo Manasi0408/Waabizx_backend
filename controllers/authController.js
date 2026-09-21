@@ -1475,8 +1475,7 @@ exports.login = async (req, res) => {
 
     let user = await User.findOne({ where: { email: trimmedEmail } });
     if (!user) {
-      // Production safeguard: some environments have legacy/case-variant table names.
-      // Fallback to direct lookup in both table variants before failing credentials.
+      // Fallback lookup in legacy table variants
       for (const tableName of ['users', 'Users']) {
         try {
           const [rows] = await sequelize.query(
@@ -1487,11 +1486,10 @@ exports.login = async (req, res) => {
             user = User.build(rows[0], { isNewRecord: false });
             break;
           }
-        } catch (_) {
-          // Ignore table missing errors and try next variant.
-        }
+        } catch (_) {}
       }
     }
+
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -1499,19 +1497,22 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Backward compatibility:
-    // If existing users were created with plaintext passwords in the DB,
-    // bcrypt.compare will fail. Detect that case and upgrade password to bcrypt.
+    // Password verification
     let isPasswordMatch = false;
-    if (looksLikeBcryptHash(user.password)) {
+    if (typeof looksLikeBcryptHash === 'function' && looksLikeBcryptHash(user.password)) {
       isPasswordMatch = await user.comparePassword(trimmedPassword);
     } else {
       isPasswordMatch = String(user.password).trim() === String(trimmedPassword);
       if (isPasswordMatch) {
-        user.password = await bcrypt.hash(trimmedPassword, 10);
-        await user.save();
+        try {
+          user.password = await bcrypt.hash(trimmedPassword, 10);
+          await user.save();
+        } catch (hashErr) {
+          console.warn('[Login] Failed to upgrade plaintext password hash:', hashErr.message);
+        }
       }
     }
+
     if (!isPasswordMatch) {
       return res.status(401).json({
         success: false,
@@ -1519,16 +1520,23 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Update last login + client IP
-    await ensureUsersIpColumn();
-    await ensureUsersCurrentSessionIdColumn();
-    const clientIp = resolveRequestIp(req);
-    // Single-session: rotate session id at every login (kicks out other devices/tabs).
-    const sessionId = await issueUserSession(user.id);
-    if (clientIp) {
-      await User.update({ ip: clientIp, lastLogin: new Date() }, { where: { id: user.id } });
-    } else {
-      await User.update({ lastLogin: new Date() }, { where: { id: user.id } });
+    // --- SAFE ISOLATED BLOCK: Schema migration & IP/Session tracking ---
+    let sessionId = null;
+    let clientIp = null;
+    try {
+      if (typeof ensureUsersIpColumn === 'function') await ensureUsersIpColumn();
+      if (typeof ensureUsersCurrentSessionIdColumn === 'function') await ensureUsersCurrentSessionIdColumn();
+      
+      if (typeof resolveRequestIp === 'function') clientIp = resolveRequestIp(req);
+      if (typeof issueUserSession === 'function') sessionId = await issueUserSession(user.id);
+
+      if (clientIp) {
+        await User.update({ ip: clientIp, lastLogin: new Date() }, { where: { id: user.id } });
+      } else {
+        await User.update({ lastLogin: new Date() }, { where: { id: user.id } });
+      }
+    } catch (trackingErr) {
+      console.warn('[Login Warning] Non-critical tracking/schema check skipped:', trackingErr?.message);
     }
 
     const token = generateToken(user.id, sessionId);
@@ -1544,30 +1552,32 @@ exports.login = async (req, res) => {
     };
     console.log('LOGIN USER:', loginUser);
 
+    // --- SAFE ISOLATED BLOCK: WCC Credits Check ---
     try {
-      const [wccRows] = await db.query(
-        'SELECT COALESCE(wcc_credits, 0) AS wcc FROM users WHERE id = ? LIMIT 1',
-        [user.id]
-      );
-      const wccCredits = Number(wccRows?.[0]?.wcc) || 0;
-      console.log('[Login][WCC] Balance in database (users.wcc_credits)', {
-        userId: user.id,
-        email: user.email,
-        wccCredits,
-        hint: 'Right panel / dashboard read the same value via GET /dashboard/:userId with x-project-id',
-      });
+      if (typeof db !== 'undefined' && db.query) {
+        const [wccRows] = await db.query(
+          'SELECT COALESCE(wcc_credits, 0) AS wcc FROM users WHERE id = ? LIMIT 1',
+          [user.id]
+        );
+        const wccCredits = Number(wccRows?.[0]?.wcc) || 0;
+        console.log('[Login][WCC] Balance:', wccCredits);
+      }
     } catch (wccLogErr) {
-      console.warn('[Login][WCC] Could not read users.wcc_credits (column may be missing)', wccLogErr?.message || wccLogErr);
+      console.warn('[Login][WCC] Could not read users.wcc_credits:', wccLogErr?.message || wccLogErr);
     }
 
+    // --- SAFE ISOLATED BLOCK: WhatsApp Payment State ---
     let whatsappPayment = null;
     try {
-      whatsappPayment = await getWhatsAppPaymentState(user.id, null);
+      if (typeof getWhatsAppPaymentState === 'function') {
+        whatsappPayment = await getWhatsAppPaymentState(user.id, null);
+      }
     } catch (paymentCheckErr) {
-      console.warn('[Login] WhatsApp payment check skipped', paymentCheckErr?.message || paymentCheckErr);
+      console.warn('[Login] WhatsApp payment check skipped:', paymentCheckErr?.message || paymentCheckErr);
     }
 
-    res.json({
+    // Guaranteed response dispatch
+    return res.json({
       success: true,
       token,
       user: loginUser,
@@ -1575,8 +1585,10 @@ exports.login = async (req, res) => {
       paymentRequired: false,
       redirectUrl: null,
     });
+
   } catch (error) {
-    res.status(500).json({
+    console.error('[Login Error]:', error);
+    return res.status(500).json({
       success: false,
       message: 'Server error',
       error: error.message
@@ -1586,7 +1598,6 @@ exports.login = async (req, res) => {
 
 exports.getProfile = async (req, res) => {
   try {
-    await ensureUsersAvatarLongText();
     const user = await User.findByPk(req.user.id, {
       attributes: { exclude: ['password'] }
     });
@@ -1598,23 +1609,12 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    const projectIdRaw =
-      req.headers['x-project-id'] ??
-      req.headers['x_project_id'] ??
-      req.query?.projectId;
-    const projectId = Number(projectIdRaw);
-    const whatsappPayment = await getWhatsAppPaymentState(
-      user.id,
-      Number.isInteger(projectId) && projectId > 0 ? projectId : null
-    );
-
-    res.json({
+    return res.json({
       success: true,
-      user: user.get({ plain: true }),
-      whatsappPayment,
+      user
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Server error',
       error: error.message
