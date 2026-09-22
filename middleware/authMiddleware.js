@@ -19,8 +19,8 @@ const getProjectIdFromRequest = (req) => {
 };
 
 /**
- * Single active session per account (same email/password login elsewhere invalidates this token).
- * Uses raw SQL for session column read/write so Sequelize column naming cannot break auth.
+ * JWT must include a session id. PC and mobile can stay logged in at the same time
+ * (no "logged in elsewhere" logout when opening a second device).
  */
 async function enforceSingleUserSession(userId, decodedSid) {
   const sid = String(decodedSid || '').trim();
@@ -32,19 +32,10 @@ async function enforceSingleUserSession(userId, decodedSid) {
 
   let storedSid = await readUserSessionId(userId);
   if (!storedSid) {
-    // Legacy rows / first request after migration: bind once, never overwrite an existing session.
     storedSid = await bindUserSessionIdIfEmpty(userId, sid);
   }
 
-  if (!storedSid || storedSid !== sid) {
-    return {
-      ok: false,
-      error: 'SessionInvalidated',
-      message: 'Session expired (logged in elsewhere). Please login again.',
-    };
-  }
-
-  return { ok: true, storedSid };
+  return { ok: true, storedSid: storedSid || sid };
 }
 
 exports.protect = async (req, res, next) => {

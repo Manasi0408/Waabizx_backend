@@ -203,7 +203,7 @@ function resolveRequestIp(req) {
 }
 
 const pendingRegisterOtps = new Map();
-const REGISTRATION_OTP_VALIDITY_MS = 10 * 60 * 1000; // 10 minutes
+const REGISTRATION_OTP_VALIDITY_MS = 30 * 60 * 1000; // 30 minutes
 const REGISTRATION_MIN_PASSWORD_LEN = 6; // must match User model validation
 const PASSWORD_RESET_OTP_VALIDITY_MS = 10 * 60 * 1000; // 10 minutes
 const PASSWORD_RESET_OTP_HASH_SALT = process.env.PASSWORD_RESET_OTP_SALT || process.env.JWT_SECRET || 'password-reset-otp-salt';
@@ -211,6 +211,263 @@ const PASSWORD_RESET_OTP_HASH_SALT = process.env.PASSWORD_RESET_OTP_SALT || proc
 const normalizeMobileNumber = (value) => {
   return String(value || '').replace(/\D/g, '').trim();
 };
+
+function normalizeAuthEmail(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '');
+}
+
+async function findUserForLogin(email) {
+  const normalized = normalizeAuthEmail(email);
+  if (!normalized) return null;
+
+  let user = await User.findOne({ where: { email: normalized } });
+  if (user) return user;
+
+  try {
+    const [rows] = await sequelize.query(
+      'SELECT * FROM users WHERE LOWER(TRIM(email)) = :email LIMIT 1',
+      { replacements: { email: normalized } }
+    );
+    if (Array.isArray(rows) && rows.length > 0) {
+      return User.build(rows[0], { isNewRecord: false });
+    }
+  } catch (_) {
+    /* ignore */
+  }
+
+  for (const tableName of ['Users']) {
+    try {
+      const [rows] = await sequelize.query(
+        `SELECT * FROM \`${tableName}\` WHERE LOWER(TRIM(email)) = :email LIMIT 1`,
+        { replacements: { email: normalized } }
+      );
+      if (Array.isArray(rows) && rows.length > 0) {
+        return User.build(rows[0], { isNewRecord: false });
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  return null;
+}
+
+async function verifyLoginPassword(user, rawPassword) {
+  const storedPassword = user?.password != null ? String(user.password) : '';
+  if (!storedPassword) return { match: false, plainToUpgrade: null };
+
+  const candidates = [];
+  const add = (v) => {
+    const s = v == null ? '' : String(v);
+    if (s && !candidates.includes(s)) candidates.push(s);
+  };
+  add(String(rawPassword || '').trim());
+  add(rawPassword);
+
+  for (const candidate of candidates) {
+    if (looksLikeBcryptHash(storedPassword)) {
+      if (await bcrypt.compare(candidate, storedPassword)) {
+        return { match: true, plainToUpgrade: null };
+      }
+    } else if (storedPassword.trim() === candidate) {
+      return { match: true, plainToUpgrade: candidate };
+    }
+  }
+
+  return { match: false, plainToUpgrade: null };
+}
+
+async function issueLoginSessionWithRetry(userId) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await ensureUserAuthSchema();
+      return await issueUserSession(userId);
+    } catch (e) {
+      lastErr = e;
+      await ensureUsersCurrentSessionIdColumn();
+    }
+  }
+  throw lastErr || new Error('Failed to issue login session');
+}
+
+/** Signup reached OTP step but never got a users row — finish create on login (same password). */
+function pendingRegistrationPasswordMatches(pending, rawPassword) {
+  if (!pending) return false;
+  const stored = String(pending.password || '').trim();
+  if (!stored) return false;
+  const candidates = [];
+  const add = (v) => {
+    const s = v == null ? '' : String(v);
+    if (s && !candidates.includes(s)) candidates.push(s);
+  };
+  add(String(rawPassword || '').trim());
+  add(rawPassword);
+  return candidates.some((c) => c === stored);
+}
+
+async function upsertInactiveSignupUser(req, record) {
+  const email = normalizeAuthEmail(record.email);
+  const plainPassword = String(record.password || '').trim();
+  const pricing = await resolvePricingContextFromRequest(
+    {
+      ...req,
+      body: {
+        ...(req.body || {}),
+        country: record.country,
+        countryCode: record.countryCode,
+        mobileNumber: record.mobileNumber,
+      },
+    },
+    { mobileNumber: record.mobileNumber, country: record.country }
+  );
+
+  await ensureUserAuthSchema();
+
+  const fields = {
+    name: record.name,
+    mobileNumber: record.mobileNumber,
+    password: plainPassword,
+    country: pricing.country,
+    currency: pricing.currency,
+    ip: resolveRequestIp(req),
+    role: record.role || 'admin',
+    status: 'inactive',
+    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(record.name)}&background=random`,
+  };
+
+  const existing = await User.findOne({ where: { email } });
+  if (existing) {
+    await existing.update(fields);
+    return existing;
+  }
+
+  return User.create({ ...fields, email });
+}
+
+async function activateSignupUserFromPending(req, pending, pricing) {
+  const email = normalizeAuthEmail(pending.email);
+  const plainPassword = String(pending.password || '').trim();
+  const fields = {
+    name: pending.name,
+    mobileNumber: pending.mobileNumber,
+    password: plainPassword,
+    country: pricing.country,
+    currency: pricing.currency,
+    ip: resolveRequestIp(req),
+    role: pending.role || 'admin',
+    status: 'active',
+    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(pending.name)}&background=random`,
+  };
+
+  let user = await User.findOne({ where: { email } });
+  if (user) {
+    const st = String(user.status || 'active').toLowerCase();
+    if (st === 'active') {
+      const err = new Error('User already active');
+      err.code = 'ALREADY_ACTIVE';
+      throw err;
+    }
+    await user.update(fields);
+    return user;
+  }
+
+  return User.create({ ...fields, email });
+}
+
+async function recoverUserFromPendingRegistration(req, email, rawPassword) {
+  const normalized = normalizeAuthEmail(email);
+  if (!normalized) return { user: null };
+
+  const pending = await loadPendingRegistration(normalized);
+  if (!pending) return { user: null };
+
+  if (Date.now() > pending.expiresAt) {
+    await deletePendingRegistration(normalized);
+    return {
+      user: null,
+      status: 400,
+      message:
+        'Registration expired before the account was saved. Please sign up again and verify OTP.',
+    };
+  }
+
+  if (!pendingRegistrationPasswordMatches(pending, rawPassword)) {
+    return { user: null };
+  }
+
+  const plainPassword = String(pending.password || '').trim();
+  if (plainPassword.length < REGISTRATION_MIN_PASSWORD_LEN) {
+    return {
+      user: null,
+      status: 400,
+      message: `Password must be at least ${REGISTRATION_MIN_PASSWORD_LEN} characters. Please register again.`,
+    };
+  }
+
+  const pendingEmail = normalizeAuthEmail(pending.email);
+  const pricing = await resolvePricingContextFromRequest(
+    {
+      ...req,
+      body: {
+        ...(req.body || {}),
+        country: pending.country,
+        countryCode: pending.countryCode,
+        mobileNumber: pending.mobileNumber,
+      },
+    },
+    { mobileNumber: pending.mobileNumber, country: pending.country }
+  );
+
+  await ensureUserAuthSchema();
+  try {
+    let user = await User.findOne({ where: { email: pendingEmail } });
+    if (user && String(user.status || 'active').toLowerCase() === 'active') {
+      await deletePendingRegistration(normalized);
+      return { user };
+    }
+    if (user) {
+      await user.update({
+        name: pending.name,
+        mobileNumber: pending.mobileNumber,
+        password: plainPassword,
+        country: pricing.country,
+        currency: pricing.currency,
+        ip: resolveRequestIp(req),
+        role: pending.role || 'admin',
+        status: 'active',
+      });
+    } else {
+      user = await activateSignupUserFromPending(req, pending, pricing);
+    }
+    await deletePendingRegistration(normalized);
+    logger.log('[Login] recovered user from registration_pending', { userId: user.id, email: pendingEmail });
+    return { user };
+  } catch (createErr) {
+    logger.error('recoverUserFromPendingRegistration User.create failed', createErr);
+    if (createErr.name === 'SequelizeUniqueConstraintError') {
+      await deletePendingRegistration(normalized);
+      const existing = await findUserForLogin(pendingEmail);
+      if (existing) return { user: existing };
+    }
+    if (createErr.name === 'SequelizeValidationError') {
+      return {
+        user: null,
+        status: 400,
+        message: createErr.errors?.[0]?.message || 'Could not finish account setup. Please register again.',
+      };
+    }
+    return {
+      user: null,
+      status: 500,
+      message: 'Could not finish account setup. Please verify OTP on the register page or contact support.',
+    };
+  }
+}
 
 const parseProjectIdFromRequest = (req) => {
   const raw = req?.projectId ?? req?.headers?.['x-project-id'] ?? req?.body?.projectId;
@@ -506,7 +763,7 @@ exports.register = async (req, res) => {
     }
     
     // Trim and normalize
-    const trimmedEmail = String(email).trim().toLowerCase();
+    const trimmedEmail = normalizeAuthEmail(email);
     const trimmedName = String(name).trim();
     const trimmedPassword = String(password).trim();
     const mobileNumber = normalizeMobileNumber(mobileNumberRaw);
@@ -738,7 +995,7 @@ exports.requestRegisterOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Mobile number is required' });
     }
 
-    const trimmedEmail = String(email).trim().toLowerCase();
+    const trimmedEmail = normalizeAuthEmail(email);
     const trimmedName = String(name).trim();
     const trimmedPassword = String(password).trim();
     // Self-service OTP registration always creates an account owner (admin).
@@ -775,7 +1032,10 @@ exports.requestRegisterOtp = async (req, res) => {
     }
 
     const existingByEmail = await User.findOne({ where: { email: trimmedEmail } });
-    if (existingByEmail) {
+    if (
+      existingByEmail &&
+      String(existingByEmail.status || 'active').toLowerCase() === 'active'
+    ) {
       return res.status(400).json({ success: false, message: 'User already exists with this email' });
     }
     let existingByMobile = null;
@@ -787,7 +1047,11 @@ exports.requestRegisterOtp = async (req, res) => {
       }
       // DB migration may still be pending; skip mobile uniqueness check temporarily.
     }
-    if (existingByMobile) {
+    if (
+      existingByMobile &&
+      normalizeAuthEmail(existingByMobile.email) !== trimmedEmail &&
+      String(existingByMobile.status || 'active').toLowerCase() === 'active'
+    ) {
       return res.status(400).json({ success: false, message: 'User already exists with this mobile number' });
     }
 
@@ -805,6 +1069,16 @@ exports.requestRegisterOtp = async (req, res) => {
     };
 
     try {
+      await upsertInactiveSignupUser(req, pendingRecord);
+    } catch (userPersistErr) {
+      logger.error('requestRegisterOtp upsertInactiveSignupUser failed', userPersistErr);
+      return res.status(500).json({
+        success: false,
+        message: userPersistErr.message || 'Could not save your account. Please try again.',
+      });
+    }
+
+    try {
       await upsertPendingRegistration(trimmedEmail, pendingRecord, otp);
     } catch (persistErr) {
       logger.error('requestRegisterOtp persist pending', persistErr);
@@ -820,7 +1094,7 @@ exports.requestRegisterOtp = async (req, res) => {
       await deletePendingRegistration(trimmedEmail);
       return res.status(400).json({
         success: false,
-        message: `Failed to send OTP to email: ${sendErr.message}`,
+        message: `Failed to send OTP to email: ${sendErr.message}. Your signup was saved — use Resend OTP or contact support.`,
       });
     }
 
@@ -841,7 +1115,7 @@ exports.requestRegisterOtp = async (req, res) => {
 
 exports.resendRegisterOtp = async (req, res) => {
   try {
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const email = normalizeAuthEmail(req.body?.email);
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
@@ -889,7 +1163,7 @@ exports.resendRegisterOtp = async (req, res) => {
 
 exports.verifyRegisterOtp = async (req, res) => {
   try {
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const email = normalizeAuthEmail(req.body?.email);
     const otp = String(req.body?.otp || '').trim();
 
     if (!email) {
@@ -913,24 +1187,6 @@ exports.verifyRegisterOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
 
-    const existingByEmail = await User.findOne({ where: { email: pending.email } });
-    if (existingByEmail) {
-      await deletePendingRegistration(email);
-      return res.status(400).json({ success: false, message: 'User already exists with this email' });
-    }
-    let existingByMobile = null;
-    try {
-      existingByMobile = await User.findOne({ where: { mobileNumber: pending.mobileNumber } });
-    } catch (mobileCheckError) {
-      if (!isUnknownMobileNumberColumnError(mobileCheckError)) {
-        throw mobileCheckError;
-      }
-    }
-    if (existingByMobile) {
-      await deletePendingRegistration(email);
-      return res.status(400).json({ success: false, message: 'User already exists with this mobile number' });
-    }
-
     const plainPassword = String(pending.password || '').trim();
     if (plainPassword.length < REGISTRATION_MIN_PASSWORD_LEN) {
       await deletePendingRegistration(email);
@@ -939,10 +1195,6 @@ exports.verifyRegisterOtp = async (req, res) => {
         message: `Password must be at least ${REGISTRATION_MIN_PASSWORD_LEN} characters long. Please register again.`,
       });
     }
-
-    const passwordToStore = looksLikeBcryptHash(plainPassword)
-      ? plainPassword
-      : await bcrypt.hash(plainPassword, 10);
 
     const pricing = await resolvePricingContextFromRequest(
       {
@@ -960,33 +1212,31 @@ exports.verifyRegisterOtp = async (req, res) => {
     await ensureUserAuthSchema();
     let user;
     try {
-      user = await User.create({
-        name: pending.name,
-        email: pending.email,
-        mobileNumber: pending.mobileNumber,
-        password: passwordToStore,
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(pending.name)}&background=random`,
-        role: pending.role || 'admin',
-        country: pricing.country,
-        currency: pricing.currency,
-        ip: resolveRequestIp(req),
-      });
+      user = await activateSignupUserFromPending(req, pending, pricing);
     } catch (createErr) {
-      logger.error('verifyRegisterOtp User.create failed', createErr);
-      if (createErr.name === 'SequelizeValidationError') {
-        return res.status(400).json({
-          success: false,
-          message: createErr.errors?.[0]?.message || 'Validation error',
-        });
-      }
-      if (createErr.name === 'SequelizeUniqueConstraintError') {
+      if (createErr.code === 'ALREADY_ACTIVE') {
         await deletePendingRegistration(email);
-        return res.status(400).json({
-          success: false,
-          message: 'User already exists with this email or mobile number',
-        });
+        user = await User.findOne({ where: { email: normalizeAuthEmail(pending.email) } });
+        if (!user) {
+          return res.status(400).json({ success: false, message: 'User already exists with this email' });
+        }
+      } else {
+        logger.error('verifyRegisterOtp activate user failed', createErr);
+        if (createErr.name === 'SequelizeValidationError') {
+          return res.status(400).json({
+            success: false,
+            message: createErr.errors?.[0]?.message || 'Validation error',
+          });
+        }
+        if (createErr.name === 'SequelizeUniqueConstraintError') {
+          await deletePendingRegistration(email);
+          return res.status(400).json({
+            success: false,
+            message: 'User already exists with this email or mobile number',
+          });
+        }
+        throw createErr;
       }
-      throw createErr;
     }
 
     await deletePendingRegistration(email);
@@ -1696,50 +1946,31 @@ exports.login = async (req, res) => {
       });
     }
 
-    const trimmedEmail = String(email).trim().toLowerCase();
+    const trimmedEmail = normalizeAuthEmail(email);
     const trimmedPassword = String(password).trim();
 
-    let user = await User.findOne({ where: { email: trimmedEmail } });
+    let user = await findUserForLogin(trimmedEmail);
     if (!user) {
-      // Fallback lookup in legacy table variants
-      for (const tableName of ['users', 'Users']) {
-        try {
-          const [rows] = await sequelize.query(
-            `SELECT * FROM \`${tableName}\` WHERE email = :email LIMIT 1`,
-            { replacements: { email: trimmedEmail } }
-          );
-          if (Array.isArray(rows) && rows.length > 0) {
-            user = User.build(rows[0], { isNewRecord: false });
-            break;
-          }
-        } catch (_) {}
+      const recovery = await recoverUserFromPendingRegistration(req, trimmedEmail, password);
+      if (recovery.message) {
+        return res.status(recovery.status || 400).json({
+          success: false,
+          message: recovery.message,
+        });
+      }
+      if (recovery.user) {
+        user = recovery.user;
       }
     }
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid credentials'
+        message: 'Invalid credentials',
       });
     }
 
-    // Password verification
-    let isPasswordMatch = false;
-    const storedPassword = user.password != null ? String(user.password) : '';
-    if (looksLikeBcryptHash(storedPassword)) {
-      isPasswordMatch = await user.comparePassword(trimmedPassword);
-    } else {
-      isPasswordMatch = storedPassword.trim() === trimmedPassword;
-      if (isPasswordMatch) {
-        try {
-          user.password = await bcrypt.hash(trimmedPassword, 10);
-          await user.save();
-        } catch (hashErr) {
-          console.warn('[Login] Failed to upgrade plaintext password hash:', hashErr.message);
-        }
-      }
-    }
-
+    const { match: isPasswordMatch, plainToUpgrade } = await verifyLoginPassword(user, password);
     if (!isPasswordMatch) {
       return res.status(401).json({
         success: false,
@@ -1747,36 +1978,45 @@ exports.login = async (req, res) => {
       });
     }
 
-    // --- SAFE ISOLATED BLOCK: Schema migration & IP/Session tracking ---
-    let sessionId = null;
-    let clientIp = null;
-    try {
-      await ensureUserAuthSchema();
-      clientIp = resolveRequestIp(req);
-      sessionId = await issueUserSession(user.id);
+    if (String(user.status || 'active').toLowerCase() === 'inactive') {
+      return res.status(403).json({
+        success: false,
+        message:
+          'Your account is not activated yet. Open Register, enter the OTP sent to your email (or tap Resend OTP), then log in again.',
+        needsEmailVerification: true,
+      });
+    }
 
+    if (plainToUpgrade) {
+      try {
+        user.password = plainToUpgrade;
+        await user.save();
+      } catch (hashErr) {
+        console.warn('[Login] Failed to upgrade plaintext password hash:', hashErr.message);
+      }
+    }
+
+    let sessionId = null;
+    const clientIp = resolveRequestIp(req);
+    try {
+      sessionId = await issueLoginSessionWithRetry(user.id);
+    } catch (sessionErr) {
+      logger.error('[Login] issueLoginSessionWithRetry failed', sessionErr);
+      return res.status(503).json({
+        success: false,
+        message:
+          'Could not start login session. Ensure users.currentSessionId exists in the database, then try again.',
+      });
+    }
+
+    try {
       if (clientIp) {
         await User.update({ ip: clientIp, lastLogin: new Date() }, { where: { id: user.id } });
       } else {
         await User.update({ lastLogin: new Date() }, { where: { id: user.id } });
       }
     } catch (trackingErr) {
-      console.warn('[Login Warning] Non-critical tracking/schema check skipped:', trackingErr?.message);
-    }
-
-    if (!sessionId) {
-      try {
-        sessionId = await issueUserSession(user.id);
-      } catch (retrySessionErr) {
-        console.warn('[Login] session retry failed:', retrySessionErr?.message || retrySessionErr);
-      }
-    }
-    if (!sessionId) {
-      return res.status(503).json({
-        success: false,
-        message:
-          'Could not start login session. Ensure users.currentSessionId exists in the database, then try again.',
-      });
+      console.warn('[Login Warning] lastLogin/ip update skipped:', trackingErr?.message);
     }
 
     const token = generateToken(user.id, sessionId);
