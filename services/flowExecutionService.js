@@ -296,15 +296,17 @@ function normalizeStartKeywords(raw) {
 
 function isStartTemplateButtonEdge(edge) {
   const handle = String(edge?.sourceHandle || '');
-  return handle === 'start-header-source' || handle.startsWith('template-btn-');
+  return handle.startsWith('template-btn-');
 }
 
-/** Bottom blue-dot path from Flow Start (keyword entry), not template quick-reply edges. */
+/** Keyword / default path from Flow Start (bottom dot or header + next to "Flow Start"), not template quick-reply edges. */
 function pickStartKeywordFlowTarget(outgoing) {
   const list = outgoing || [];
   if (!list.length) return null;
   const bottom = list.find((e) => String(e.sourceHandle || '') === 'start-bottom-source');
   if (bottom?.target) return bottom.target;
+  const header = list.find((e) => String(e.sourceHandle || '') === 'start-header-source');
+  if (header?.target) return header.target;
   const main = list.find((e) => !isStartTemplateButtonEdge(e));
   if (main?.target) return main.target;
   return list[0]?.target || null;
@@ -664,7 +666,7 @@ function runFlow(flow, { userInput, currentNodeId, entryViaKeyword = false } = {
         });
         return { output, nextNodeId: nodeId, done: false };
       }
-      nodeId = firstTarget;
+      nodeId = pickStartKeywordFlowTarget(outgoing) || firstTarget;
       continue;
     }
 

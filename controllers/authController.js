@@ -68,6 +68,135 @@ async function ensureUsersIpColumn() {
   }
 }
 
+/** country / currency / mobile_number required by User model on self-service signup. */
+let usersRegistrationColumnsEnsured = false;
+async function ensureUsersRegistrationColumns() {
+  if (usersRegistrationColumnsEnsured) return;
+  usersRegistrationColumnsEnsured = true;
+  try {
+    const [rows] = await sequelize.query('SHOW COLUMNS FROM users');
+    const names = new Set((rows || []).map((r) => String(r.Field || '').toLowerCase()));
+    if (!names.has('country')) {
+      await sequelize.query('ALTER TABLE users ADD COLUMN country VARCHAR(5) NULL DEFAULT NULL');
+    }
+    if (!names.has('currency')) {
+      await sequelize.query('ALTER TABLE users ADD COLUMN currency VARCHAR(10) NULL DEFAULT NULL');
+    }
+    if (!names.has('mobile_number') && !names.has('mobilenumber')) {
+      await sequelize.query(
+        'ALTER TABLE users ADD COLUMN mobile_number VARCHAR(20) NULL DEFAULT NULL'
+      );
+    }
+  } catch (e) {
+    console.warn('[auth] ensureUsersRegistrationColumns:', e?.message || e);
+  }
+}
+
+async function ensureUserAuthSchema() {
+  await ensureUsersIpColumn();
+  await ensureUsersRegistrationColumns();
+  await ensureUsersCurrentSessionIdColumn();
+  await ensureUsersAvatarLongText();
+}
+
+/** Persist signup OTP across restarts / multiple app instances (in-memory Map alone drops many signups). */
+let registrationPendingTableEnsured = false;
+async function ensureRegistrationPendingTable() {
+  if (registrationPendingTableEnsured) return;
+  registrationPendingTableEnsured = true;
+  try {
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS registration_pending (
+        email VARCHAR(255) NOT NULL,
+        payload JSON NOT NULL,
+        otp_hash VARCHAR(128) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (email)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (e) {
+    console.warn('[auth] ensureRegistrationPendingTable:', e?.message || e);
+  }
+}
+
+async function upsertPendingRegistration(email, record, otp) {
+  await ensureRegistrationPendingTable();
+  const otpHash = hashPasswordResetOtp(otp);
+  const expiresAt = new Date(record.expiresAt);
+  const payload = JSON.stringify({
+    name: record.name,
+    email: record.email,
+    password: record.password,
+    mobileNumber: record.mobileNumber,
+    country: record.country,
+    countryCode: record.countryCode,
+    role: record.role,
+  });
+  await sequelize.query(
+    `INSERT INTO registration_pending (email, payload, otp_hash, expires_at)
+     VALUES (:email, :payload, :otpHash, :expiresAt)
+     ON DUPLICATE KEY UPDATE payload = VALUES(payload), otp_hash = VALUES(otp_hash), expires_at = VALUES(expires_at)`,
+    { replacements: { email, payload, otpHash, expiresAt } }
+  );
+  pendingRegisterOtps.set(email, { ...record, otp });
+}
+
+async function loadPendingRegistration(email) {
+  const fromMemory = pendingRegisterOtps.get(email);
+  if (fromMemory && Date.now() <= fromMemory.expiresAt) {
+    return fromMemory;
+  }
+
+  await ensureRegistrationPendingTable();
+  const [rows] = await sequelize.query(
+    `SELECT payload, otp_hash, expires_at FROM registration_pending WHERE email = :email LIMIT 1`,
+    { replacements: { email } }
+  );
+  if (!Array.isArray(rows) || !rows.length) return null;
+
+  const row = rows[0];
+  const expiresMs = new Date(row.expires_at).getTime();
+  if (!Number.isFinite(expiresMs) || Date.now() > expiresMs) {
+    await deletePendingRegistration(email);
+    return null;
+  }
+
+  let payload = {};
+  try {
+    payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
+  } catch (_) {
+    return null;
+  }
+
+  return {
+    ...payload,
+    expiresAt: expiresMs,
+    otp: null,
+    _otpHash: row.otp_hash,
+  };
+}
+
+async function deletePendingRegistration(email) {
+  pendingRegisterOtps.delete(email);
+  try {
+    await ensureRegistrationPendingTable();
+    await sequelize.query(`DELETE FROM registration_pending WHERE email = :email`, {
+      replacements: { email },
+    });
+  } catch (e) {
+    console.warn('[auth] deletePendingRegistration:', e?.message || e);
+  }
+}
+
+function registrationOtpMatches(pending, otp) {
+  const code = String(otp || '').trim();
+  if (!code || !pending) return false;
+  if (pending.otp && String(pending.otp) === code) return true;
+  if (pending._otpHash && hashPasswordResetOtp(code) === pending._otpHash) return true;
+  return false;
+}
+
 function resolveRequestIp(req) {
   const ip = getClientIp(req);
   return ip ? String(ip).trim().slice(0, 45) : null;
@@ -75,6 +204,7 @@ function resolveRequestIp(req) {
 
 const pendingRegisterOtps = new Map();
 const REGISTRATION_OTP_VALIDITY_MS = 10 * 60 * 1000; // 10 minutes
+const REGISTRATION_MIN_PASSWORD_LEN = 6; // must match User model validation
 const PASSWORD_RESET_OTP_VALIDITY_MS = 10 * 60 * 1000; // 10 minutes
 const PASSWORD_RESET_OTP_HASH_SALT = process.env.PASSWORD_RESET_OTP_SALT || process.env.JWT_SECRET || 'password-reset-otp-salt';
 
@@ -326,7 +456,7 @@ const sendOtpToWhatsApp = async (mobileNumber, otpCode) => {
 
 const isUnknownMobileNumberColumnError = (error) => {
   const msg = String(error?.message || '').toLowerCase();
-  return msg.includes('unknown column') && msg.includes('mobilenumber');
+  return msg.includes('unknown column') && (msg.includes('mobilenumber') || msg.includes('mobile_number'));
 };
 
 exports.register = async (req, res) => {
@@ -389,11 +519,10 @@ exports.register = async (req, res) => {
       });
     }
 
-    // Simple password validation - minimum 4 characters
-    if (trimmedPassword.length < 4) {
+    if (trimmedPassword.length < REGISTRATION_MIN_PASSWORD_LEN) {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 4 characters long'
+        message: `Password must be at least ${REGISTRATION_MIN_PASSWORD_LEN} characters long`,
       });
     }
 
@@ -453,7 +582,7 @@ exports.register = async (req, res) => {
     // Create user (hash password explicitly to guarantee bcrypt storage)
     let user;
     try {
-      await ensureUsersIpColumn();
+      await ensureUserAuthSchema();
       const clientIp = resolveRequestIp(req);
       if (['agent', 'manager', 'admin'].includes(normalizedRole)) {
         const registerProjectId = parseProjectIdFromRequest(req);
@@ -513,8 +642,24 @@ exports.register = async (req, res) => {
     }
 
     // Single-session: create a session id on register + issue token tied to it
-    await ensureUsersCurrentSessionIdColumn();
-    const sessionId = await issueUserSession(user.id);
+    let sessionId = null;
+    try {
+      sessionId = await issueUserSession(user.id);
+    } catch (sessionErr) {
+      logger.error('Register session issue after user create', sessionErr);
+      return res.status(201).json({
+        success: true,
+        message: 'Account created. Please log in with your email and password.',
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          avatar: user.avatar,
+          role: user.role,
+          permissions: user.permissions,
+        },
+      });
+    }
     const token = generateToken(user.id, sessionId);
 
     res.status(201).json({
@@ -565,6 +710,7 @@ exports.register = async (req, res) => {
 
 exports.requestRegisterOtp = async (req, res) => {
   try {
+    await ensureUserAuthSchema();
     const body = req.body || {};
     const name = body.name || body.Name || '';
     const email = body.email || body.Email || '';
@@ -605,8 +751,11 @@ exports.requestRegisterOtp = async (req, res) => {
     if (!trimmedEmail.includes('@')) {
       return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
     }
-    if (trimmedPassword.length < 4) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 4 characters long' });
+    if (trimmedPassword.length < REGISTRATION_MIN_PASSWORD_LEN) {
+      return res.status(400).json({
+        success: false,
+        message: `Password must be at least ${REGISTRATION_MIN_PASSWORD_LEN} characters long`,
+      });
     }
     if (!/^\+\d{1,4}$/.test(countryCode)) {
       return res.status(400).json({ success: false, message: 'Please select a valid country code' });
@@ -644,7 +793,7 @@ exports.requestRegisterOtp = async (req, res) => {
 
     const otp = createOtpCode();
     const expiresAt = Date.now() + REGISTRATION_OTP_VALIDITY_MS;
-    pendingRegisterOtps.set(trimmedEmail, {
+    const pendingRecord = {
       name: trimmedName,
       email: trimmedEmail,
       password: trimmedPassword,
@@ -652,14 +801,23 @@ exports.requestRegisterOtp = async (req, res) => {
       country,
       countryCode,
       role: normalizedRole,
-      otp,
       expiresAt,
-    });
+    };
+
+    try {
+      await upsertPendingRegistration(trimmedEmail, pendingRecord, otp);
+    } catch (persistErr) {
+      logger.error('requestRegisterOtp persist pending', persistErr);
+      return res.status(500).json({
+        success: false,
+        message: 'Could not save registration session. Please try again.',
+      });
+    }
 
     try {
       await sendOTPEmail(trimmedEmail, otp);
     } catch (sendErr) {
-      pendingRegisterOtps.delete(trimmedEmail);
+      await deletePendingRegistration(trimmedEmail);
       return res.status(400).json({
         success: false,
         message: `Failed to send OTP to email: ${sendErr.message}`,
@@ -688,14 +846,24 @@ exports.resendRegisterOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
-    const pending = pendingRegisterOtps.get(email);
+    const pending = await loadPendingRegistration(email);
     if (!pending) {
       return res.status(400).json({ success: false, message: 'No pending registration found. Please register again.' });
     }
 
     const otp = createOtpCode();
     const expiresAt = Date.now() + REGISTRATION_OTP_VALIDITY_MS;
-    pendingRegisterOtps.set(email, { ...pending, otp, expiresAt });
+    const pendingRecord = {
+      name: pending.name,
+      email: pending.email,
+      password: pending.password,
+      mobileNumber: pending.mobileNumber,
+      country: pending.country,
+      countryCode: pending.countryCode,
+      role: pending.role,
+      expiresAt,
+    };
+    await upsertPendingRegistration(email, pendingRecord, otp);
 
     try {
       await sendOTPEmail(email, otp);
@@ -731,22 +899,23 @@ exports.verifyRegisterOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: 'OTP is required' });
     }
 
-    const pending = pendingRegisterOtps.get(email);
+    const pending = await loadPendingRegistration(email);
     if (!pending) {
       return res.status(400).json({ success: false, message: 'No pending registration found. Please register again.' });
     }
 
     if (Date.now() > pending.expiresAt) {
+      await deletePendingRegistration(email);
       return res.status(400).json({ success: false, message: 'OTP expired. Please resend OTP.' });
     }
 
-    if (pending.otp !== otp) {
+    if (!registrationOtpMatches(pending, otp)) {
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
 
     const existingByEmail = await User.findOne({ where: { email: pending.email } });
     if (existingByEmail) {
-      pendingRegisterOtps.delete(email);
+      await deletePendingRegistration(email);
       return res.status(400).json({ success: false, message: 'User already exists with this email' });
     }
     let existingByMobile = null;
@@ -758,13 +927,22 @@ exports.verifyRegisterOtp = async (req, res) => {
       }
     }
     if (existingByMobile) {
-      pendingRegisterOtps.delete(email);
+      await deletePendingRegistration(email);
       return res.status(400).json({ success: false, message: 'User already exists with this mobile number' });
     }
 
-    const passwordToStore = looksLikeBcryptHash(pending.password)
-      ? pending.password
-      : await bcrypt.hash(pending.password, 10);
+    const plainPassword = String(pending.password || '').trim();
+    if (plainPassword.length < REGISTRATION_MIN_PASSWORD_LEN) {
+      await deletePendingRegistration(email);
+      return res.status(400).json({
+        success: false,
+        message: `Password must be at least ${REGISTRATION_MIN_PASSWORD_LEN} characters long. Please register again.`,
+      });
+    }
+
+    const passwordToStore = looksLikeBcryptHash(plainPassword)
+      ? plainPassword
+      : await bcrypt.hash(plainPassword, 10);
 
     const pricing = await resolvePricingContextFromRequest(
       {
@@ -779,24 +957,59 @@ exports.verifyRegisterOtp = async (req, res) => {
       { mobileNumber: pending.mobileNumber, country: pending.country }
     );
 
-    await ensureUsersIpColumn();
-    await ensureUsersCurrentSessionIdColumn();
-    const user = await User.create({
-      name: pending.name,
-      email: pending.email,
-      mobileNumber: pending.mobileNumber,
-      password: passwordToStore,
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(pending.name)}&background=random`,
-      role: pending.role || 'admin',
-      country: pricing.country,
-      currency: pricing.currency,
-      ip: resolveRequestIp(req),
-    });
+    await ensureUserAuthSchema();
+    let user;
+    try {
+      user = await User.create({
+        name: pending.name,
+        email: pending.email,
+        mobileNumber: pending.mobileNumber,
+        password: passwordToStore,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(pending.name)}&background=random`,
+        role: pending.role || 'admin',
+        country: pricing.country,
+        currency: pricing.currency,
+        ip: resolveRequestIp(req),
+      });
+    } catch (createErr) {
+      logger.error('verifyRegisterOtp User.create failed', createErr);
+      if (createErr.name === 'SequelizeValidationError') {
+        return res.status(400).json({
+          success: false,
+          message: createErr.errors?.[0]?.message || 'Validation error',
+        });
+      }
+      if (createErr.name === 'SequelizeUniqueConstraintError') {
+        await deletePendingRegistration(email);
+        return res.status(400).json({
+          success: false,
+          message: 'User already exists with this email or mobile number',
+        });
+      }
+      throw createErr;
+    }
 
-    const sessionId = await issueUserSession(user.id);
+    await deletePendingRegistration(email);
+
+    let sessionId = null;
+    try {
+      sessionId = await issueUserSession(user.id);
+    } catch (sessionErr) {
+      logger.error('verifyRegisterOtp session issue after user create', sessionErr);
+      return res.status(201).json({
+        success: true,
+        message:
+          'Account created. Please log in with your email and password.',
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          mobileNumber: user.mobileNumber,
+          role: user.role,
+        },
+      });
+    }
     const token = generateToken(user.id, sessionId);
-
-    pendingRegisterOtps.delete(email);
 
     return res.status(201).json({
       success: true,
@@ -811,6 +1024,19 @@ exports.verifyRegisterOtp = async (req, res) => {
       },
     });
   } catch (error) {
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: error.errors?.[0]?.message || 'Validation error',
+      });
+    }
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email or mobile number',
+      });
+    }
+    logger.error('verifyRegisterOtp error', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to verify OTP',
@@ -1499,10 +1725,11 @@ exports.login = async (req, res) => {
 
     // Password verification
     let isPasswordMatch = false;
-    if (typeof looksLikeBcryptHash === 'function' && looksLikeBcryptHash(user.password)) {
+    const storedPassword = user.password != null ? String(user.password) : '';
+    if (looksLikeBcryptHash(storedPassword)) {
       isPasswordMatch = await user.comparePassword(trimmedPassword);
     } else {
-      isPasswordMatch = String(user.password).trim() === String(trimmedPassword);
+      isPasswordMatch = storedPassword.trim() === trimmedPassword;
       if (isPasswordMatch) {
         try {
           user.password = await bcrypt.hash(trimmedPassword, 10);
@@ -1524,11 +1751,9 @@ exports.login = async (req, res) => {
     let sessionId = null;
     let clientIp = null;
     try {
-      if (typeof ensureUsersIpColumn === 'function') await ensureUsersIpColumn();
-      if (typeof ensureUsersCurrentSessionIdColumn === 'function') await ensureUsersCurrentSessionIdColumn();
-      
-      if (typeof resolveRequestIp === 'function') clientIp = resolveRequestIp(req);
-      if (typeof issueUserSession === 'function') sessionId = await issueUserSession(user.id);
+      await ensureUserAuthSchema();
+      clientIp = resolveRequestIp(req);
+      sessionId = await issueUserSession(user.id);
 
       if (clientIp) {
         await User.update({ ip: clientIp, lastLogin: new Date() }, { where: { id: user.id } });
@@ -1537,6 +1762,21 @@ exports.login = async (req, res) => {
       }
     } catch (trackingErr) {
       console.warn('[Login Warning] Non-critical tracking/schema check skipped:', trackingErr?.message);
+    }
+
+    if (!sessionId) {
+      try {
+        sessionId = await issueUserSession(user.id);
+      } catch (retrySessionErr) {
+        console.warn('[Login] session retry failed:', retrySessionErr?.message || retrySessionErr);
+      }
+    }
+    if (!sessionId) {
+      return res.status(503).json({
+        success: false,
+        message:
+          'Could not start login session. Ensure users.currentSessionId exists in the database, then try again.',
+      });
     }
 
     const token = generateToken(user.id, sessionId);
