@@ -409,6 +409,79 @@ function syntheticContactKey(userId, projectId, rowIndex) {
   return `import-${id}`.slice(0, 191);
 }
 
+function csvCellString(value) {
+  if (value == null) return '';
+  return String(value);
+}
+
+function looksLikePhoneValue(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 15;
+}
+
+function isPhoneHeader(key) {
+  const lk = String(key || '').toLowerCase().trim();
+  return (
+    /^phone$/i.test(lk) ||
+    /phone\s*number/i.test(lk) ||
+    /^phonenumber$/i.test(lk) ||
+    /^mobile$/i.test(lk) ||
+    /^msisdn$/i.test(lk) ||
+    /^whatsapp$/i.test(lk) ||
+    /^tel$/i.test(lk) ||
+    /^telephone$/i.test(lk) ||
+    /^contact\s*number$/i.test(lk) ||
+    /^cell\s*phone$/i.test(lk) ||
+    /^number$/i.test(lk)
+  );
+}
+
+function isNameHeader(key) {
+  const lk = String(key || '').toLowerCase().trim();
+  return (
+    lk === 'name' ||
+    /^full\s*name$/i.test(lk) ||
+    /^contact\s*name$/i.test(lk) ||
+    /^customer\s*name$/i.test(lk) ||
+    /^first\s*name$/i.test(lk) ||
+    /^last\s*name$/i.test(lk)
+  );
+}
+
+function isEmailHeader(key) {
+  const lk = String(key || '').toLowerCase().trim();
+  return /^e-?mail$/i.test(lk) || /^email\s*address$/i.test(lk);
+}
+
+function isCountryHeader(key) {
+  const lk = String(key || '').toLowerCase().trim();
+  return /^country$/i.test(lk) || /^country\s*code$/i.test(lk);
+}
+
+function isTagsHeader(key) {
+  const lk = String(key || '').toLowerCase().trim();
+  return /^tags?$/i.test(lk) || /^labels?$/i.test(lk);
+}
+
+function parseTagsCell(value) {
+  const raw = csvCellString(value).trim();
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((t) => String(t).trim()).filter(Boolean);
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return raw
+    .split(/[,|;]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
 function csvRowToContactRecord(row, userId, projectId, rowIndex) {
   const keys = Object.keys(row || {});
   if (keys.length === 0) {
@@ -418,70 +491,111 @@ function csvRowToContactRecord(row, userId, projectId, rowIndex) {
       customFields: {},
     };
   }
-  const phoneKey =
-    keys.find((k) => /^phone$/i.test(k)) ||
-    keys.find((k) => /phone\s*number/i.test(k)) ||
-    keys.find((k) => /phonenumber/i.test(k)) ||
-    keys.find((k) => /mobile/i.test(k)) ||
-    keys.find((k) => /msisdn/i.test(k)) ||
-    keys.find((k) => /^number$/i.test(k)) ||
-    keys[0];
+
+  let phoneKey =
+    keys.find((k) => /^phone$/i.test(String(k).trim())) ||
+    keys.find((k) => /phone\s*number/i.test(String(k))) ||
+    keys.find((k) => /phonenumber/i.test(String(k))) ||
+    keys.find((k) => isPhoneHeader(k) && !isNameHeader(k));
+
+  if (!phoneKey) {
+    phoneKey = keys.find((k) => looksLikePhoneValue(row[k]));
+  }
 
   let phoneRaw = phoneKey != null ? row[phoneKey] : '';
-  if (String(phoneRaw || '').trim() === '') {
+  if (csvCellString(phoneRaw).trim() === '') {
     for (const k of keys) {
-      const v = row[k];
-      if (v != null && String(v).trim() !== '') {
-        phoneRaw = v;
+      if (looksLikePhoneValue(row[k])) {
+        phoneKey = k;
+        phoneRaw = row[k];
         break;
       }
     }
   }
-  let phone = String(phoneRaw || '').replace(/\D/g, '');
+
+  const phoneTrimmed = csvCellString(phoneRaw).trim();
+  let phone =
+    normalizeWhatsAppRecipient(phoneTrimmed) ||
+    phoneTrimmed.replace(/\D/g, '') ||
+    '';
   if (!phone) {
     phone = syntheticContactKey(userId, projectId, rowIndex);
   }
   if (phone.length > 191) phone = phone.slice(0, 191);
 
-  const countryCode = getCountryFromPhone(phone);
-
+  const firstNameKey = keys.find((k) => /^first\s*name$/i.test(String(k).trim()));
+  const lastNameKey = keys.find((k) => /^last\s*name$/i.test(String(k).trim()));
   const nameKey =
-    keys.find((k) => /^name$/i.test(k)) ||
-    keys.find((k) => /^full\s*name$/i.test(k)) ||
-    keys.find((k) => /^contact\s*name$/i.test(k));
-  let name = nameKey ? String(row[nameKey] || '').trim() : '';
+    keys.find((k) => /^name$/i.test(String(k).trim())) ||
+    keys.find((k) => /^full\s*name$/i.test(String(k))) ||
+    keys.find((k) => /^contact\s*name$/i.test(String(k))) ||
+    keys.find((k) => /^customer\s*name$/i.test(String(k)));
+
+  let name = '';
+  if (firstNameKey || lastNameKey) {
+    name = [firstNameKey ? csvCellString(row[firstNameKey]).trim() : '', lastNameKey ? csvCellString(row[lastNameKey]).trim() : '']
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  } else if (nameKey) {
+    name = csvCellString(row[nameKey]).trim();
+  }
   if (!name) {
     for (const k of keys) {
-      if (k === phoneKey) continue;
-      const v = row[k];
-      if (v != null && String(v).trim() !== '') {
-        name = String(v).trim();
+      if (k === phoneKey || isPhoneHeader(k) || isEmailHeader(k) || isCountryHeader(k) || isTagsHeader(k)) {
+        continue;
+      }
+      const v = csvCellString(row[k]).trim();
+      if (v) {
+        name = v;
         break;
       }
     }
   }
   if (!name) {
-    name = String(phoneRaw || phone || 'Imported').trim().slice(0, 255) || 'Imported';
+    name = phoneTrimmed || phone || 'Imported';
   }
   name = name.slice(0, 255);
 
+  const emailKey = keys.find((k) => isEmailHeader(k));
+  const emailRaw = emailKey ? csvCellString(row[emailKey]).trim() : '';
+  const emailLooksValid =
+    emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw);
+  const email = emailLooksValid ? emailRaw : null;
+
+  const countryKey = keys.find((k) => isCountryHeader(k));
+  const countryFromCsv = countryKey ? csvCellString(row[countryKey]).trim() : '';
+  const countryCode = countryFromCsv || getCountryFromPhone(phone);
+
+  const tagsKey = keys.find((k) => isTagsHeader(k));
+  const tags = tagsKey ? parseTagsCell(row[tagsKey]) : null;
+
   const customFields = {};
   keys.forEach((key) => {
-    const lk = String(key).toLowerCase();
-    const isPhoneCol =
-      key === phoneKey ||
-      /^phone$/i.test(lk) ||
-      /phone\s*number/i.test(lk) ||
-      /^phonenumber$/i.test(lk) ||
-      /^mobile$/i.test(lk) ||
-      /^msisdn$/i.test(lk);
-    const isNameCol = key === nameKey || lk === 'name' || /^full\s*name$/i.test(lk) || /^contact\s*name$/i.test(lk);
-    if (!isPhoneCol && !isNameCol) {
-      customFields[key] = row[key] != null ? String(row[key]).trim() : '';
+    const isPhoneCol = key === phoneKey || isPhoneHeader(key);
+    const isNameCol =
+      key === nameKey ||
+      key === firstNameKey ||
+      key === lastNameKey ||
+      isNameHeader(key);
+    const isEmailCol = isEmailHeader(key) && emailLooksValid;
+    const isCountryCol = isCountryHeader(key);
+    const isTagsCol = isTagsHeader(key);
+    if (isPhoneCol || isNameCol || isEmailCol || isCountryCol || isTagsCol) {
+      return;
     }
+    customFields[key] = csvCellString(row[key]);
   });
 
-  return { phone, name, customFields, country_code: countryCode, country: countryCode };
+  return {
+    phone,
+    name,
+    email,
+    tags,
+    customFields,
+    country_code: countryCode,
+    country: countryCode,
+  };
 }
 
 function linesToContactRecords(text, userId, projectId) {
@@ -489,20 +603,52 @@ function linesToContactRecords(text, userId, projectId) {
     .split(/\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
+  if (lines.length === 0) return [];
+
+  const separator = detectCsvSeparator(lines[0]);
+  const splitLine = (line) =>
+    line.split(separator).map((p) => p.replace(/^"|"$/g, '').trim());
+
+  const headerParts = splitLine(lines[0]);
+  const hasHeader =
+    headerParts.length > 1 &&
+    headerParts.some((h) => isPhoneHeader(h) || isNameHeader(h) || isEmailHeader(h));
+
+  const dataLines = hasHeader ? lines.slice(1) : lines;
   const results = [];
-  lines.forEach((line, i) => {
-    const parts = line.split(/[,;\t]/).map((p) => p.replace(/^"|"$/g, '').trim()).filter((p) => p.length > 0);
-    const phoneRaw = parts[0] || line;
-    let phone = String(phoneRaw).replace(/\D/g, '');
+
+  dataLines.forEach((line, i) => {
+    const parts = splitLine(line).filter((p) => p.length > 0);
+    if (parts.length === 0) return;
+
+    if (hasHeader && headerParts.length === parts.length) {
+      const row = {};
+      headerParts.forEach((h, idx) => {
+        row[h] = parts[idx];
+      });
+      results.push(csvRowToContactRecord(row, userId, projectId, i + 1));
+      return;
+    }
+
+    const phoneIdx = parts.findIndex((p) => looksLikePhoneValue(p));
+    const phoneRaw = phoneIdx >= 0 ? parts[phoneIdx] : parts[0];
+    const phoneTrimmed = csvCellString(phoneRaw).trim();
+    let phone =
+      normalizeWhatsAppRecipient(phoneTrimmed) ||
+      phoneTrimmed.replace(/\D/g, '') ||
+      '';
     if (!phone) {
       phone = syntheticContactKey(userId, projectId, i + 1);
     }
     if (phone.length > 191) phone = phone.slice(0, 191);
-    const name = (parts[1] || parts[0] || line).slice(0, 255) || 'Imported';
+    const namePart = parts.find((p, idx) => idx !== phoneIdx && csvCellString(p).trim());
+    const name = (namePart || phoneTrimmed || 'Imported').slice(0, 255);
     const countryCode = getCountryFromPhone(phone);
     results.push({
       phone,
       name,
+      email: null,
+      tags: null,
       customFields: { raw: line.slice(0, 2000) },
       country_code: countryCode,
       country: countryCode,
@@ -570,13 +716,21 @@ async function upsertContactImportRow(userId, projectId, row) {
         order: [['updatedAt', 'DESC']],
       })
     : null;
+  const importEmail =
+    row.email !== undefined && row.email !== null && String(row.email).trim() !== ''
+      ? String(row.email).trim()
+      : null;
+  const importTags = Array.isArray(row.tags) ? row.tags : null;
+
   if (contact) {
     await contact.update({
       projectId: null,
-      name: row.name || contact.name || 'Imported',
+      name: row.name != null && String(row.name).trim() !== '' ? row.name : contact.name || 'Imported',
+      email: importEmail !== null ? importEmail : contact.email,
+      tags: importTags !== null ? importTags : contact.tags,
       customFields: mergeCustomFields(contact.customFields, row.customFields),
-      country: contact.country || row.country || row.country_code || null,
-      country_code: contact.country_code || row.country_code || row.country || null,
+      country: row.country || row.country_code || contact.country || null,
+      country_code: row.country_code || row.country || contact.country_code || null,
     });
     await contact.reload();
     return { contact, created: false };
@@ -588,6 +742,8 @@ async function upsertContactImportRow(userId, projectId, row) {
       projectId: null,
       phone: row.phone,
       name: row.name || 'Imported',
+      email: importEmail,
+      tags: importTags || [],
       customFields: row.customFields || {},
       country: row.country || row.country_code || null,
       country_code: row.country_code || row.country || null,
@@ -608,10 +764,12 @@ async function upsertContactImportRow(userId, projectId, row) {
 
     await contact.update({
       projectId: null,
-      name: row.name || contact.name || 'Imported',
+      name: row.name != null && String(row.name).trim() !== '' ? row.name : contact.name || 'Imported',
+      email: importEmail !== null ? importEmail : contact.email,
+      tags: importTags !== null ? importTags : contact.tags,
       customFields: mergeCustomFields(contact.customFields, row.customFields),
-      country: contact.country || row.country || row.country_code || null,
-      country_code: contact.country_code || row.country_code || row.country || null,
+      country: row.country || row.country_code || contact.country || null,
+      country_code: row.country_code || row.country || contact.country_code || null,
     });
     await contact.reload();
     return { contact, created: false };

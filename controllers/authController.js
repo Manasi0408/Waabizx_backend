@@ -2032,36 +2032,11 @@ exports.login = async (req, res) => {
     };
     console.log('LOGIN USER:', loginUser);
 
-    // --- SAFE ISOLATED BLOCK: WCC Credits Check ---
-    try {
-      if (typeof db !== 'undefined' && db.query) {
-        const [wccRows] = await db.query(
-          'SELECT COALESCE(wcc_credits, 0) AS wcc FROM users WHERE id = ? LIMIT 1',
-          [user.id]
-        );
-        const wccCredits = Number(wccRows?.[0]?.wcc) || 0;
-        console.log('[Login][WCC] Balance:', wccCredits);
-      }
-    } catch (wccLogErr) {
-      console.warn('[Login][WCC] Could not read users.wcc_credits:', wccLogErr?.message || wccLogErr);
-    }
-
-    // --- SAFE ISOLATED BLOCK: WhatsApp Payment State ---
-    let whatsappPayment = null;
-    try {
-      if (typeof getWhatsAppPaymentState === 'function') {
-        whatsappPayment = await getWhatsAppPaymentState(user.id, null);
-      }
-    } catch (paymentCheckErr) {
-      console.warn('[Login] WhatsApp payment check skipped:', paymentCheckErr?.message || paymentCheckErr);
-    }
-
     // Guaranteed response dispatch
     return res.json({
       success: true,
       token,
       user: loginUser,
-      whatsappPayment,
       paymentRequired: false,
       redirectUrl: null,
     });
