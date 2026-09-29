@@ -342,6 +342,9 @@ async function upsertInactiveSignupUser(req, record) {
 
   const existing = await User.findOne({ where: { email } });
   if (existing) {
+    if (String(existing.status || 'active').toLowerCase() === 'active') {
+      return existing;
+    }
     await existing.update(fields);
     return existing;
   }
@@ -1979,12 +1982,31 @@ exports.login = async (req, res) => {
     }
 
     if (String(user.status || 'active').toLowerCase() === 'inactive') {
-      return res.status(403).json({
-        success: false,
-        message:
-          'Your account is not activated yet. Open Register, enter the OTP sent to your email (or tap Resend OTP), then log in again.',
-        needsEmailVerification: true,
-      });
+      const pendingSignup = await loadPendingRegistration(trimmedEmail);
+      if (pendingSignup) {
+        return res.status(403).json({
+          success: false,
+          message:
+            'Your account is not activated yet. Open Register, enter the OTP sent to your email (or tap Resend OTP), then log in again.',
+          needsEmailVerification: true,
+        });
+      }
+      try {
+        await user.update({ status: 'active' });
+        user.status = 'active';
+      } catch (activateErr) {
+        logger.warn('[Login] could not activate inactive user without pending signup', {
+          userId: user.id,
+          email: trimmedEmail,
+          error: activateErr?.message,
+        });
+        return res.status(403).json({
+          success: false,
+          message:
+            'Your account is not activated yet. Open Register, enter the OTP sent to your email (or tap Resend OTP), then log in again.',
+          needsEmailVerification: true,
+        });
+      }
     }
 
     if (plainToUpgrade) {
