@@ -1,0 +1,17 @@
+WAABIZX - PLATFORM FEATURES (OVERVIEW)
+
+This document summarizes major feature areas available on WaabizX as documented in the knowledge base.
+
+Documented feature areas include:
+- WhatsApp messaging and account connection (see whatsapp.txt)
+- Contact management (see contacts.txt)
+- Campaigns and broadcast messaging (see campaigns.txt)
+- WhatsApp message templates (see templates.txt)
+- Live chat and team inbox (see live-chat.txt)
+- Automation and flows (where documented in campaigns/whatsapp materials)
+- Developer and API access (see api.txt)
+- Plans and billing (see pricing.txt)
+
+The AI assistant must not claim a feature exists unless it appears in the relevant knowledge base file.
+
+If a visitor asks about a feature not described here or in linked documents, say you do not have that information.

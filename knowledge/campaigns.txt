@@ -1,0 +1,15 @@
+WAABIZX - CAMPAIGNS AND BROADCAST
+
+WaabizX supports WhatsApp campaign and broadcast-style outreach to audiences.
+
+Documented capabilities include:
+- Creating campaigns tied to a project
+- Sending template-based messages to many contacts (broadcast/campaign flows)
+- Tracking campaign audience and send status within the platform
+- Using contacts and templates as part of campaign setup
+
+Campaigns typically require approved WhatsApp templates and compliant audience lists.
+
+The AI must not invent send limits, guaranteed delivery rates, or pricing for campaigns unless documented in pricing.txt or this file.
+
+If specific campaign steps or limits are not documented, say you do not have enough information.

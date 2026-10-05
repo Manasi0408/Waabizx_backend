@@ -1,0 +1,14 @@
+WAABIZX - WHATSAPP TEMPLATES
+
+WaabizX helps businesses create and manage WhatsApp message templates for outbound communication.
+
+Documented capabilities include:
+- Creating and storing message templates in a project
+- Submitting or syncing templates for WhatsApp Business approval (as supported by the platform)
+- Using approved templates in campaigns, broadcasts, and agent sends where policy allows
+
+Template content must follow WhatsApp/Meta template rules (categories such as marketing, utility, authentication).
+
+The AI must not invent template approval times, rejection reasons, or unsupported template types.
+
+If asked for template wording or approval status rules not in this document, say you do not have enough information.

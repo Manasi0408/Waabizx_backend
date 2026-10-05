@@ -1,0 +1,22 @@
+WAABIZX - LIVE CHAT AND TEAM INBOX
+
+WaabizX includes team inbox and live chat style handling for WhatsApp conversations.
+
+Documented capabilities include:
+- A shared inbox for incoming and outgoing WhatsApp messages
+- Assigning conversations to agents or managers (team roles)
+- Replying to customers from the web inbox
+- Viewing conversation history with contacts
+
+Live chat features depend on an connected WhatsApp number and active project plan where applicable.
+
+The AI must not invent SLA guarantees, agent seat limits, or unsupported channels unless documented in pricing.txt or here.
+
+If asked about inbox workflow details not in this document, say you do not have enough information and offer to connect the visitor with a human agent.
+
+WEBSITE AI CHAT — MANUAL ASSISTANT
+
+If a website or in-app AI chat visitor needs a person:
+- Offer: "Would you like to connect with a human agent?"
+- They may tap Manual help in the chat to request a chatbot agent.
+- If no agent accepts within about 2 minutes, the request is cancelled and the AI assistant continues the conversation.

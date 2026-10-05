@@ -1,0 +1,28 @@
+{
+  "name": "loan_consolidation_v3",
+  "category": "MARKETING",
+  "language": "en_IN",
+  "components": [
+    {
+      "type": "HEADER",
+      "format": "TEXT",
+      "text": "Personal Loan Information"
+    },
+    {
+      "type": "BODY",
+      "text": "Hello {{1}},\n\nWe have a personal loan offer for you.\n\nLoan Details:\n• Amount: Up to {{2}}\n• Interest Rate: {{3}}% per annum\n• Tenure: {{4}} years\n• Processing Fee: {{5}}\n\nDisbursement:\n• Amount credited to: {{6}}\n• Processing time: {{7}} working days\n\nDocuments Required:\n• Salary slip (3 months)\n• Bank statement (3 months)\n• PAN Card\n• Aadhaar Card\n• Address Proof\n\nThis is a promotional message. Approval subject to verification.\n\nReply INTERESTED to proceed.\nReply STOP to opt-out."
+    },
+    {
+      "type": "FOOTER",
+      "text": "T&C apply. Approval subject to verification."
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [
+        { "type": "QUICK_REPLY", "text": "INTERESTED" },
+        { "type": "QUICK_REPLY", "text": "NOT INTERESTED" }
+      ]
+    }
+  ]
+}
+

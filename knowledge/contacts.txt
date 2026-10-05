@@ -1,0 +1,13 @@
+WAABIZX - CONTACT MANAGEMENT
+
+WaabizX provides contact management for WhatsApp audiences within a project.
+
+Documented capabilities include:
+- Storing customer contacts (e.g. name, phone, attributes) per project
+- Organizing contacts for campaigns and inbox conversations
+- Importing contacts (such as CSV import where enabled in the product)
+- Tags and attributes for segmentation (where documented in the product)
+
+The AI must not invent import limits, field names, or integrations not described in the knowledge base.
+
+If asked about a contact feature not documented here, say you do not have enough information.

@@ -1,0 +1,15 @@
+WAABIZX - WHATSAPP MESSAGING
+
+WaabizX connects businesses to WhatsApp Business so teams can send and receive WhatsApp messages from the platform.
+
+Documented capabilities include:
+- Linking a WhatsApp Business account to a WaabizX project
+- Sending and receiving WhatsApp messages through the platform inbox
+- Using approved WhatsApp templates where required by WhatsApp policy
+- Managing customer conversations tied to contacts and projects
+
+WhatsApp messaging on WaabizX is subject to Meta/WhatsApp rules (template categories, opt-in, quality rating, etc.).
+
+The AI must not invent WhatsApp limits, approval times, or Meta policies beyond what is stated in the knowledge base.
+
+If asked about connection steps or policy details not documented here, say you do not have enough information.

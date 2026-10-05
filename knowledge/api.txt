@@ -1,0 +1,12 @@
+WAABIZX - APIS AND INTEGRATIONS
+
+WaabizX can expose programmatic access for developers integrating WhatsApp messaging with their systems.
+
+Documented capabilities include:
+- Project-level API access for sending messages (where enabled in the product)
+- API tokens or credentials managed from the project settings (as shown in the app)
+- Webhook-style or API flows for automation partners (only as documented in product docs)
+
+The AI must not invent endpoint URLs, rate limits, SDK names, or pricing for API usage unless written in this file or pricing.txt.
+
+If asked for technical API details not documented here, say you do not have enough information and suggest checking official WaabizX documentation or support.

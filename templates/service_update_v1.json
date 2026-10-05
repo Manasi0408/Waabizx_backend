@@ -1,0 +1,12 @@
+{
+    "name": "service_update_v1",
+    "category": "UTILITY",
+    "language": "en_US",
+    "components": [
+      {
+        "type": "BODY",
+        "text": "Hello {{1}},\n\nThis is an update regarding your recent request submitted on our platform.\n\nYour request is currently being processed. We will notify you if any additional information is required.\n\nThank you for your patience."
+      }
+    ]
+  }
+  

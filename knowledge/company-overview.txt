@@ -1,0 +1,20 @@
+WAABIZX - COMPANY OVERVIEW
+
+WaabizX is a WhatsApp communication and marketing platform for businesses.
+
+WaabizX helps businesses manage WhatsApp customer communication from a centralized web platform.
+
+Who WaabizX is for:
+- Businesses that use WhatsApp to talk to customers
+- Teams that run marketing, support, or sales on WhatsApp
+- Organizations that need campaigns, templates, contacts, and team inbox in one place
+
+WaabizX is designed to simplify WhatsApp operations without requiring visitors to understand technical backend details.
+
+For detailed capabilities, see the other knowledge base documents (features, whatsapp, campaigns, templates, contacts, live-chat, api, pricing, faq).
+
+AI ASSISTANT RULE
+
+Only state that a WaabizX capability exists when it is documented in the WaabizX knowledge base.
+
+If information is not in the knowledge base, say you do not have enough information. Do not invent features, prices, or policies.

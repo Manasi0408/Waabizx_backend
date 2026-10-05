@@ -1,0 +1,12 @@
+{
+    "name": "loan_info_update_v1",
+    "category": "UTILITY",
+    "language": "en_US",
+    "components": [
+      {
+        "type": "BODY",
+        "text": "Hello {{1}},\n\nThis message is from ABC Finance Pvt Ltd regarding an update to your existing loan-related enquiry.\n\nIf you would like further details, please reply YES.\n\nReply STOP to unsubscribe."
+      }
+    ]
+  }
+  

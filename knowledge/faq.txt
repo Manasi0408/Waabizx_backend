@@ -1,0 +1,33 @@
+WAABIZX - FREQUENTLY ASKED QUESTIONS
+
+Q: What is WaabizX?
+A: WaabizX is a WhatsApp communication and marketing platform for businesses. See company-overview.txt.
+
+Q: Can I send WhatsApp campaigns with WaabizX?
+A: WaabizX documents campaign and broadcast capabilities. See campaigns.txt.
+
+Q: Can I manage contacts?
+A: Yes, contact management is documented. See contacts.txt.
+
+Q: Does WaabizX have a team inbox?
+A: Live chat and inbox features are documented. See live-chat.txt.
+
+Q: How much does WaabizX cost?
+A: Only quote prices from pricing.txt. If pricing is placeholder or missing, say you do not have current pricing information.
+
+Q: How do I connect WhatsApp?
+A: High-level connection is described in whatsapp.txt. For step-by-step account-specific help, direct visitors to WaabizX support or in-app onboarding if not detailed here.
+
+HUMAN AGENT HANDOFF (WEBSITE CHAT)
+
+When the visitor asks something not covered in the knowledge base, or asks an off-topic question unrelated to WaabizX:
+- Say you do not have that information or that you only help with WaabizX.
+- End the reply by asking whether they would like to connect with a human agent.
+- Example: "I don't have that information in our WaabizX docs. Would you like to connect with a human agent?"
+- Example (off-topic): "I'm here to help with WaabizX only. Would you like to connect with a human agent?"
+
+In the logged-in app, the visitor can use Manual help in the chat widget to reach a chatbot agent.
+
+GENERAL RULE FOR THE AI
+
+Answer FAQ items using these files only. Do not add new FAQ answers that are not grounded in the knowledge base.

@@ -1,0 +1,191 @@
+{
+  "rich_templates": {
+    "welcome_rich": {
+      "name": "welcome_rich",
+      "language": "en_US",
+      "category": "MARKETING",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "IMAGE",
+          "example": {
+            "header_handle": ["YOUR_IMAGE_HANDLE"]
+          }
+        },
+        {
+          "type": "BODY",
+          "text": "Hello {{1}}, welcome to our service! Click below to start."
+        },
+        {
+          "type": "FOOTER",
+          "text": "We're here to help 24/7"
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "type": "QUICK_REPLY",
+              "text": "Start Chat"
+            },
+            {
+              "type": "URL",
+              "text": "Visit Website",
+              "url": "https://yourwebsite.com",
+              "example": []
+            }
+          ]
+        }
+      ]
+    },
+    "product_promo_rich": {
+      "name": "product_promo_rich",
+      "category": "MARKETING",
+      "language": "en_US",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "TEXT",
+          "text": "Special Offer Today!"
+        },
+        {
+          "type": "BODY",
+          "text": "Hi {{1}}, get {{2}}% off on {{3}}. Use code: {{4}}"
+        },
+        {
+          "type": "FOOTER",
+          "text": "Limited time only"
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "type": "URL",
+              "text": "Shop Now",
+              "url": "https://yourwebsite.com/shop?code={{4}}",
+              "example": ["CODE123"]
+            },
+            {
+              "type": "QUICK_REPLY",
+              "text": "More Info"
+            },
+            {
+              "type": "QUICK_REPLY",
+              "text": "Contact Us"
+            }
+          ]
+        }
+      ]
+    },
+    "support_rich": {
+      "name": "support_rich",
+      "category": "UTILITY",
+      "language": "en_US",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "TEXT",
+          "text": "How can we help?"
+        },
+        {
+          "type": "BODY",
+          "text": "Hi {{1}}, we're here to assist you with your {{2}}."
+        },
+        {
+          "type": "FOOTER",
+          "text": "Available 24/7"
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "type": "QUICK_REPLY",
+              "text": "Track Order"
+            },
+            {
+              "type": "QUICK_REPLY",
+              "text": "Speak to Agent"
+            },
+            {
+              "type": "PHONE_NUMBER",
+              "text": "Call Us",
+              "phone_number": "+1234567890"
+            }
+          ]
+        }
+      ]
+    },
+    "order_track_rich": {
+      "name": "order_track_rich",
+      "category": "UTILITY",
+      "language": "en_US",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "TEXT",
+          "text": "Order #{{1}}"
+        },
+        {
+          "type": "BODY",
+          "text": "Hi {{2}}, your order has been confirmed! Total: ${{3}}. Expected delivery: {{4}}"
+        },
+        {
+          "type": "FOOTER",
+          "text": "Thank you for shopping with us"
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "type": "URL",
+              "text": "Track Order",
+              "url": "https://yourstore.com/track/{{1}}",
+              "example": ["ORD123"]
+            },
+            {
+              "type": "QUICK_REPLY",
+              "text": "Contact Support"
+            }
+          ]
+        }
+      ]
+    },
+    "product_video_rich": {
+      "name": "product_video_rich",
+      "category": "MARKETING",
+      "language": "en_US",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "VIDEO",
+          "example": {
+            "header_handle": ["YOUR_VIDEO_HANDLE"]
+          }
+        },
+        {
+          "type": "BODY",
+          "text": "Watch our new product {{1}} in action! Get {{2}}% off today."
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "type": "URL",
+              "text": "Buy Now",
+              "url": "https://yourwebsite.com/product/{{1}}",
+              "example": ["PROD123"]
+            },
+            {
+              "type": "QUICK_REPLY",
+              "text": "Learn More"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "usage": {
+    "description": "Copy any template and use with POST /api/templates/create",
+    "note": "Replace YOUR_IMAGE_HANDLE or YOUR_VIDEO_HANDLE with actual handles from Meta Media API upload"
+  }
+}
+

@@ -1,0 +1,28 @@
+{
+  "name": "loan_application_info_v1",
+  "category": "UTILITY",
+  "language": "en_IN",
+  "components": [
+    {
+      "type": "HEADER",
+      "format": "TEXT",
+      "text": "Loan Application Update"
+    },
+    {
+      "type": "BODY",
+      "text": "Hello {{1}},\n\nYour loan application information:\n\nLoan Amount: {{2}}\nInterest Rate: {{3}}% per annum\nTenure: {{4}} years\nProcessing Fee: {{5}}\n\nProcessing Status: {{6}}\nProcessing Time: {{7}} working days\n\nRequired Documents:\n• Salary slip (3 months)\n• Bank statement (3 months)\n• PAN Card\n• Aadhaar Card\n• Address Proof\n\nFor queries, contact support.\n\nReply STOP to opt-out."
+    },
+    {
+      "type": "FOOTER",
+      "text": "T&C apply."
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [
+        { "type": "QUICK_REPLY", "text": "CONTACT SUPPORT" },
+        { "type": "QUICK_REPLY", "text": "VIEW STATUS" }
+      ]
+    }
+  ]
+}
+
